@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Our Services - Sridhar Chary & Shiva Services</title>
+    
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/style.css">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- AOS Animation -->
+    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+</head>
+<body class="bg-gray-50">
+    <!-- Navigation (Same as index.html) -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-gradient-to-r from-blue-600 to-purple-600 sticky-top">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="/">
+                <i class="fas fa-store me-2"></i>
+                Sridhar Chary & Shiva Services
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/services.html">Services</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/jobs.html">Job Alerts</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/contact.html">Contact</a>
+                    </li>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="loginDropdown" role="button" data-bs-toggle="dropdown">
+                            <i class="fas fa-user-circle"></i> Login
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="/admin.html">Admin Login</a></li>
+                            <li><a class="dropdown-item" href="/manager.html">Manager Login</a></li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Page Header -->
+    <section class="bg-gradient-to-r from-blue-600 to-purple-600 text-white py-5">
+        <div class="container">
+            <h1 class="display-4 fw-bold text-center" data-aos="fade-up">Our Services</h1>
+            <p class="lead text-center" data-aos="fade-up" data-aos-delay="100">
+                Comprehensive digital solutions for all your needs
+            </p>
+        </div>
+    </section>
+
+    <!-- Services Section -->
+    <section class="py-5">
+        <div class="container">
+            <!-- Google Ads Banner -->
+            <div class="google-ad-banner mb-5 text-center bg-gray-200 p-4 rounded" data-ad-type="banner">
+                <p class="text-muted">Advertisement</p>
+            </div>
+
+            <!-- Insurance Services -->
+            <div id="insurance" class="service-category mb-5" data-aos="fade-up">
+                <h2 class="h3 mb-4 text-primary">
+                    <i class="fas fa-shield-alt me-2"></i>Insurance Services
+                </h2>
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
+                            <div class="card-body">
+                                <h5 class="card-title">LIC Insurance Advisory</h5>
+                                <ul class="list-unstyled">
+                                    <li><i class="fas fa-check text-success me-2"></i>Policy consultation</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Premium payment assistance</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Claim support</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Policy renewal reminders</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
+                            <div class="card-body">
+                                <h5 class="card-title">Health & Vehicle Insurance</h5>
+                                <ul class="list-unstyled">
+                                    <li><i class="fas fa-check text-success me-2"></i>Health insurance plans</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Vehicle insurance renewal</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Comparison services</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Quick claim processing</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Financial Services -->
+            <div id="money" class="service-category mb-5" data-aos="fade-up">
+                <h2 class="h3 mb-4 text-success">
+                    <i class="fas fa-money-bill-wave me-2"></i>Financial Services
+                </h2>
+                <div class="row g-4">
+                    <div class="col-md-4">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
+                            <div class="card-body text-center">
+                                <i class="fas fa-exchange-alt fa-3x text-success mb-3"></i>
+                                <h5 class="card-title">Money Transfer</h5>
+                                <p class="card-text">Secure domestic and international money transfers</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
+                            <div class="card-body text-center">
+                                <i class="fas fa-credit-card fa-3x text-success mb-3"></i>
+                                <h5 class="card-title">ATM Services</h5>
+                                <p class="card-text">Cash withdrawal and deposit assistance</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
+                            <div class="card-body text-center">
+                                <i class="fas fa-university fa-3x text-success mb-3"></i>
+                                <h5 class="card-title">Banking Support</h5>
+                                <p class="card-text">Account opening and banking documentation</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Government Services -->
+            <div id="govt" class="service-category mb-5" data-aos="fade-up">
+                <h2 class="h3 mb-4 text-info">
+                    <i class="fas fa-landmark me-2"></i>Government Services
+                </h2>
+                <div class="row g-4">
+                    <div class="col-lg-3 col-md-6">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
+                            <div class="card-body">
+                                <i class="fas fa-id-card fa-2x text-info mb-3"></i>
+                                <h6 class="card-title">PAN Card</h6>
+                                <small>New application, corrections, reprint</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-3 col-md-6">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
+                            <div class="card-body">
+                                <i class="fas fa-fingerprint fa-2x text-info mb-3"></i>
+                                <h6 class="card-title">Aadhaar Services</h6>
+                                <small>Update, enrollment, download</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-3 col-md-6">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
+                            <div class="card-body">
+                                <i class="fas fa-piggy-bank fa-2x text-info mb-3"></i>
+                                <h6 class="card-title">PF Services</h6>
+                                <small>Withdrawal, transfer, KYC update</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-3 col-md-6">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
+                            <div class="card-body">
+                                <i class="fas fa-file-alt fa-2x text-info mb-3"></i>
+                                <h6 class="card-title">Job Applications</h6>
+                                <small>Form filling, result checking</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Booking Services -->
+            <div id="booking" class="service-category mb-5" data-aos="fade-up">
+                <h2 class="h3 mb-4 text-warning">
+                    <i class="fas fa-ticket-alt me-2"></i>Booking Services
+                </h2>
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow bg-gradient-to-br from-yellow-50 to-orange-50">
+                            <div class="card-body">
+                                <h5 class="card-title">
+                                    <i class="fas fa-bus me-2"></i>Bus Booking
+                                </h5>
+                                <p>TSRTC, APSRTC, and private bus bookings</p>
+                                <ul class="list-unstyled small">
+                                    <li>• Seat selection assistance</li>
+                                    <li>• Group bookings</li>
+                                    <li>• Cancellation support</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow bg-gradient-to-br from-blue-50 to-indigo-50">
+                            <div class="card-body">
+                                <h5 class="card-title">
+                                    <i class="fas fa-plane me-2"></i>Flight Booking
+                                </h5>
+                                <p>Domestic and international flight tickets</p>
+                                <ul class="list-unstyled small">
+                                    <li>• Best fare search</li>
+                                    <li>• Web check-in assistance</li>
+                                    <li>• Rescheduling help</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bill Payment Services -->
+            <div id="bills" class="service-category mb-5" data-aos="fade-up">
+                <h2 class="h3 mb-4 text-danger">
+                    <i class="fas fa-file-invoice-dollar me-2"></i>Bill Payment Services
+                </h2>
+                <div class="row g-4">
+                    <div class="col-lg-3 col-md-6">
+                        <div class="list-group">
+                            <div class="list-group-item">
+                                <i class="fas fa-tv me-2 text-danger"></i>DTH Recharge
+                            </div>
+                            <div class="list-group-item">
+                                <i class="fas fa-fire me-2 text-danger"></i>Gas Bill Payment
+                            </div>
+                            <div class="list-group-item">
+                                <i class="fas fa-bolt me-2 text-danger"></i>Electricity Bill
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-3 col-md-6">
+                        <div class="list-group">
+                            <div class="list-group-item">
+                                <i class="fas fa-water me-2 text-danger"></i>Water Bill
+                            </div>
+                            <div class="list-group-item">
+                                <i class="fas fa-mobile-alt me-2 text-danger"></i>Mobile Recharge
+                            </div>
+                            <div class="list-group-item">
+                                <i class="fas fa-credit-card me-2 text-danger"></i>Credit Card Bill
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="alert alert-info">
+                            <h6 class="alert-heading">Quick & Secure Payments</h6>
+                            <p class="mb-0">All bill payments are processed instantly with secure payment gateways. Get instant confirmation and receipts.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Document Services -->
+            <div id="documents" class="service-category mb-5" data-aos="fade-up">
+                <h2 class="h3 mb-4 text-purple">
+                    <i class="fas fa-print me-2"></i>Document & Printing Services
+                </h2>
+                <div class="row g-4">
+                    <div class="col-md-4">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
+                            <div class="card-body">
+                                <h5 class="card-title">Printing Services</h5>
+                                <ul class="list-unstyled">
+                                    <li>✓ Black & White printing</li>
+                                    <li>✓ Color printing</li>
+                                    <li>✓ Bulk printing</li>
+                                    <li>✓ Photo printing</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
+                            <div class="card-body">
+                                <h5 class="card-title">Scanning & Lamination</h5>
+                                <ul class="list-unstyled">
+                                    <li>✓ Document scanning</li>
+                                    <li>✓ PDF conversion</li>
+                                    <li>✓ Lamination (all sizes)</li>
+                                    <li>✓ Binding services</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
+                            <div class="card-body">
+                                <h5 class="card-title">Typing & Documentation</h5>
+                                <ul class="list-unstyled">
+                                    <li>✓ Telugu typing</li>
+                                    <li>✓ English typing</li>
+                                    <li>✓ Resume creation</li>
+                                    <li>✓ Letter drafting</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Special Services -->
+            <div class="service-category mb-5" data-aos="fade-up">
+                <h2 class="h3 mb-4 text-secondary">
+                    <i class="fas fa-star me-2"></i>Special Services
+                </h2>
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow border-primary">
+                            <div class="card-body">
+                                <h5 class="card-title text-primary">Project Reports</h5>
+                                <p>Professional project report preparation</p>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <span class="badge bg-primary">Excel Reports</span>
+                                    <span class="badge bg-success">PowerPoint Presentations</span>
+                                    <span class="badge bg-info">Word Documents</span>
+                                    <span class="badge bg-warning">Data Analysis</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow border-success">
+                            <div class="card-body">
+                                <h5 class="card-title text-success">Vehicle & Sand Booking</h5>
+                                <p>Special booking services for vehicles and construction materials</p>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <span class="badge bg-secondary">Vehicle Registration</span>
+                                    <span class="badge bg-dark">Sand Booking</span>
+                                    <span class="badge bg-danger">Transport Permits</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pricing Info -->
+            <div class="alert alert-success text-center" data-aos="fade-up">
+                <h4 class="alert-heading">Affordable Pricing</h4>
+                <p class="mb-0">All services are offered at competitive rates with no hidden charges. Visit our center for detailed pricing information.</p>
+            </div>
+
+            <!-- Google Ads Sidebar -->
+            <div class="google-ad-banner mt-5 text-center bg-gray-200 p-4 rounded" data-ad-type="sidebar">
+                <p class="text-muted">Advertisement</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="py-5 bg-gradient-to-r from-purple-600 to-blue-600 text-white">
+        <div class="container text-center">
+            <h2 class="mb-4">Ready to Get Started?</h2>
+            <p class="lead mb-4">Visit our center or call us for immediate assistance</p>
+            <div class="d-flex justify-content-center gap-3">
+                <a href="tel:9160037232" class="btn btn-light btn-lg">
+                    <i class="fas fa-phone me-2"></i>Call Now
+                </a>
+                <a href="/contact.html" class="btn btn-outline-light btn-lg">
+                    <i class="fas fa-map-marker-alt me-2"></i>Get Directions
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-dark text-white py-4">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6">
+                    <h5>Sridhar Chary & Shiva Services</h5>
+                    <p class="mb-0">Your trusted partner for all digital services</p>
+                </div>
+                <div class="col-md-6 text-md-end">
+                    <p class="mb-0">© 2024 All rights reserved</p>
+                    <p>Mobile: 9160037232</p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
+    <script>
+        AOS.init({
+            duration: 800,
+            once: true
+        });
+    </script>
+    <script src="js/main.js"></script>
+</body>
+</html>

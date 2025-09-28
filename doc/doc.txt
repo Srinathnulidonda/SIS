@@ -1,0 +1,28 @@
+my new project is to create an sridhar internat services website using pure html5, css, js, bootstrap5, tailwind css ,  for the backend flask 
+
+in there should be post all the new job alters and notifications, and the services provided is
+LIC INSURANCE ADVISOR
+ALL INTERNET SERVICES ALL MONEY
+TRANSACTIONS ATM
+JOB APPLICATIONS & RESULTS,
+PAN CARDS
+TELUGU LETTER TYPING
+PRINTING SCANNING IN LAMINATION
+BUS FLIGHT TICKETS BOOKING
+E CHALLANS
+ALL VEHICLE INSURANCE
+SAND BOOKING
+ADHAR PRINTING
+PF LOANS
+DTH & CREDIT CARD & GAS & ELECTRICITY
+BILLS
+PROJECT REPORTS & EXCEL EDITING)
+(POWER POINT & WORD
+PROP: SRIDHAR CHARY & SHIVA
+MOBILE: 9160037232
+the some job notifications should be taken from the free apis all the job notifications mainly govt and private
+add the admin pannel where the some job notifications should be taken from the free apis all the job notifications mainly govt and private
+should be mannged by the admin
+add the google ads to make money
+so provide me an project overview for this
+
