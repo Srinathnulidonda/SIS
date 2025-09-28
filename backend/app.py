@@ -41,6 +41,7 @@ from email_validator import validate_email
 import jwt
 import hashlib
 import bleach
+from urllib.parse import urlparse
 
 from models import (
     db, User, Job, Ad, Analytics, UserSession,
@@ -166,29 +167,59 @@ metrics.info('sridhar_services', 'Sridhar Internet Services', version='2.0.0')
 celery = Celery(app.name)
 celery.conf.update(app.config)
 
-jobstores = {
-    'default': RedisJobStore(
-        host='localhost',
-        port=6379,
-        db=1
-    )
-}
-scheduler = BackgroundScheduler(jobstores=jobstores, timezone='UTC')
-scheduler.start()
+def setup_redis_scheduler():
+    """Setup APScheduler with Redis jobstore"""
+    try:
+        redis_url = app.config['REDIS_URL']
+        parsed_url = urlparse(redis_url)
+        
+        jobstores = {
+            'default': RedisJobStore(
+                host=parsed_url.hostname,
+                port=parsed_url.port,
+                password=parsed_url.password,
+                db=1
+            )
+        }
+        
+        scheduler = BackgroundScheduler(jobstores=jobstores, timezone='UTC')
+        scheduler.start()
+        return scheduler
+    except Exception as e:
+        app.logger.warning(f"Failed to setup Redis scheduler: {str(e)}")
+        scheduler = BackgroundScheduler(timezone='UTC')
+        scheduler.start()
+        return scheduler
 
-if not app.debug:
-    file_handler = RotatingFileHandler(
-        'logs/sridhar_services.log',
-        maxBytes=10485760,
-        backupCount=10
-    )
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-    ))
-    file_handler.setLevel(logging.INFO)
-    app.logger.addHandler(file_handler)
-    app.logger.setLevel(logging.INFO)
-    app.logger.info('Sridhar Services startup')
+scheduler = setup_redis_scheduler()
+
+def setup_logging():
+    """Setup logging with proper error handling"""
+    if not app.debug:
+        log_dir = os.path.join(os.getcwd(), 'logs')
+        
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = os.path.join(log_dir, 'sridhar_services.log')
+            
+            file_handler = RotatingFileHandler(
+                log_file,
+                maxBytes=10485760,
+                backupCount=10
+            )
+            file_handler.setFormatter(logging.Formatter(
+                '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+            ))
+            file_handler.setLevel(logging.INFO)
+            app.logger.addHandler(file_handler)
+            app.logger.setLevel(logging.INFO)
+            app.logger.info('Sridhar Services startup')
+        except Exception as e:
+            app.logger.warning(f"Failed to setup file logging: {str(e)}")
+            app.logger.setLevel(logging.INFO)
+            app.logger.info('Sridhar Services startup (console logging only)')
+
+setup_logging()
 
 if app.config['STRIPE_SECRET_KEY']:
     stripe.api_key = app.config['STRIPE_SECRET_KEY']
@@ -1329,31 +1360,34 @@ def cleanup_task():
     except Exception as e:
         app.logger.error(f"Cleanup failed: {str(e)}")
 
-scheduler.add_job(
-    func=lambda: fetch_jobs_task.delay('all'),
-    trigger='interval',
-    hours=6,
-    id='fetch_all_jobs',
-    replace_existing=True
-)
+try:
+    scheduler.add_job(
+        func=lambda: fetch_jobs_task.delay('all'),
+        trigger='interval',
+        hours=6,
+        id='fetch_all_jobs',
+        replace_existing=True
+    )
 
-scheduler.add_job(
-    func=lambda: cleanup_task.delay(),
-    trigger='cron',
-    hour=3,
-    minute=0,
-    id='daily_cleanup',
-    replace_existing=True
-)
+    scheduler.add_job(
+        func=lambda: cleanup_task.delay(),
+        trigger='cron',
+        hour=3,
+        minute=0,
+        id='daily_cleanup',
+        replace_existing=True
+    )
 
-scheduler.add_job(
-    func=lambda: backup_task.delay(),
-    trigger='cron',
-    hour=2,
-    minute=0,
-    id='daily_backup',
-    replace_existing=True
-)
+    scheduler.add_job(
+        func=lambda: backup_task.delay(),
+        trigger='cron',
+        hour=2,
+        minute=0,
+        id='daily_backup',
+        replace_existing=True
+    )
+except Exception as e:
+    app.logger.warning(f"Failed to schedule jobs: {str(e)}")
 
 @app.cli.command()
 def init_db():
