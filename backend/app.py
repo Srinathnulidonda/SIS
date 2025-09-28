@@ -1,3 +1,4 @@
+# backend/app.py
 import os
 import secrets
 import json
@@ -41,17 +42,14 @@ import jwt
 import hashlib
 import bleach
 
-# Import models and services
 from models import (
-    db, User, Job, Ad, Analytics, UserSession, UserPermission,
+    db, User, Job, Ad, Analytics, UserSession,
     AuditLog, JobFetcherService, AnalyticsService, DatabaseMaintenance,
     UserRole, JobStatus, JobSource, AdType, redis_client
 )
 
-# Load environment variables
 load_dotenv()
 
-# Initialize Sentry for error tracking
 if os.getenv('SENTRY_DSN'):
     sentry_sdk.init(
         dsn=os.getenv('SENTRY_DSN'),
@@ -60,15 +58,12 @@ if os.getenv('SENTRY_DSN'):
         profiles_sample_rate=0.1,
     )
 
-# Create Flask app with optimizations
 app = Flask(__name__, 
     static_folder='static',
     template_folder='templates'
 )
 
-# Production configuration
 class Config:
-    # Security
     SECRET_KEY = os.getenv('SECRET_KEY', secrets.token_hex(32))
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', secrets.token_hex(32))
     WTF_CSRF_ENABLED = True
@@ -78,7 +73,6 @@ class Config:
     SESSION_COOKIE_SAMESITE = 'Lax'
     PERMANENT_SESSION_LIFETIME = timedelta(hours=24)
     
-    # Database
     SQLALCHEMY_DATABASE_URI = os.getenv(
         'DATABASE_URL',
         'postgresql://database_v3r2_user:QaF6Nczo8NaoB6XZo09SpCJ3EVvnNPNx@dpg-d3cik4j7mgec73aho5qg-a/database_v3r2'
@@ -96,14 +90,12 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_RECORD_QUERIES = False
     
-    # Redis & Caching
     REDIS_URL = os.getenv('REDIS_URL', 'redis://red-d3cikjqdbo4c73e72slg:mirq8x6uekGSDV0O3eb1eVjUG3GuYkVe@red-d3cikjqdbo4c73e72slg:6379')
     CACHE_TYPE = 'redis'
     CACHE_REDIS_URL = REDIS_URL
     CACHE_DEFAULT_TIMEOUT = 300
     CACHE_KEY_PREFIX = 'sridhar_cache_'
     
-    # Celery
     CELERY_BROKER_URL = REDIS_URL
     CELERY_RESULT_BACKEND = REDIS_URL
     CELERY_ACCEPT_CONTENT = ['json']
@@ -111,31 +103,26 @@ class Config:
     CELERY_RESULT_SERIALIZER = 'json'
     CELERY_TIMEZONE = 'UTC'
     
-    # Rate limiting
     RATELIMIT_STORAGE_URL = REDIS_URL
-    RATELIMIT_STRATEGY = 'fixed-window-elastic-expiry'
+    RATELIMIT_STRATEGY = 'fixed-window'
     RATELIMIT_DEFAULT = '100/hour'
     
-    # File uploads
-    MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
+    MAX_CONTENT_LENGTH = 16 * 1024 * 1024
     UPLOAD_FOLDER = 'uploads'
     ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx'}
     
-    # Stripe
     STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
     STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY')
     STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
 
 app.config.from_object(Config)
 
-# Initialize extensions
 db.init_app(app)
 migrate = Migrate(app, db, compare_type=True)
 csrf = CSRFProtect(app)
 compress = Compress(app)
 cache = Cache(app)
 
-# Security headers with Talisman
 talisman = Talisman(
     app,
     force_https=True,
@@ -153,7 +140,6 @@ talisman = Talisman(
     }
 )
 
-# Rate limiting
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
@@ -161,7 +147,6 @@ limiter = Limiter(
     default_limits=["1000 per hour", "100 per minute"]
 )
 
-# CORS configuration
 CORS(app, 
     origins=os.getenv('ALLOWED_ORIGINS', '*').split(','),
     allow_headers=['Content-Type', 'Authorization', 'X-CSRF-Token'],
@@ -170,21 +155,17 @@ CORS(app,
     max_age=3600
 )
 
-# Login manager
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'auth.login'
 login_manager.session_protection = 'strong'
 
-# Prometheus metrics
 metrics = PrometheusMetrics(app)
 metrics.info('sridhar_services', 'Sridhar Internet Services', version='2.0.0')
 
-# Celery configuration
 celery = Celery(app.name)
 celery.conf.update(app.config)
 
-# APScheduler configuration
 jobstores = {
     'default': RedisJobStore(
         host='localhost',
@@ -195,7 +176,6 @@ jobstores = {
 scheduler = BackgroundScheduler(jobstores=jobstores, timezone='UTC')
 scheduler.start()
 
-# Configure logging
 if not app.debug:
     file_handler = RotatingFileHandler(
         'logs/sridhar_services.log',
@@ -210,25 +190,19 @@ if not app.debug:
     app.logger.setLevel(logging.INFO)
     app.logger.info('Sridhar Services startup')
 
-# Stripe configuration
 if app.config['STRIPE_SECRET_KEY']:
     stripe.api_key = app.config['STRIPE_SECRET_KEY']
 
-# Request handling middleware
 @app.before_request
 def before_request():
-    """Pre-request processing"""
     g.start_time = datetime.utcnow()
     g.request_id = secrets.token_hex(16)
     
-    # Session management
     if 'session_id' not in session:
         session['session_id'] = secrets.token_hex(32)
         session.permanent = True
     
-    # Security checks
     if current_user.is_authenticated:
-        # Check if session is still valid
         user_session = UserSession.query.filter_by(
             user_id=current_user.id,
             session_token=session.get('session_token'),
@@ -240,7 +214,6 @@ def before_request():
             flash('Your session has expired. Please login again.', 'warning')
             return redirect(url_for('auth.login'))
     
-    # Track request
     if not request.path.startswith('/static'):
         AnalyticsService.track_event(
             request,
@@ -250,7 +223,6 @@ def before_request():
 
 @app.after_request
 def after_request(response):
-    """Post-request processing"""
     if hasattr(g, 'start_time'):
         elapsed = (datetime.utcnow() - g.start_time).total_seconds()
         response.headers['X-Response-Time'] = str(elapsed)
@@ -258,7 +230,6 @@ def after_request(response):
     if hasattr(g, 'request_id'):
         response.headers['X-Request-ID'] = g.request_id
     
-    # Security headers
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-XSS-Protection'] = '1; mode=block'
@@ -266,10 +237,8 @@ def after_request(response):
     
     return response
 
-# Error handlers
 @app.errorhandler(400)
 def bad_request(e):
-    """Handle bad request errors"""
     return jsonify({
         'error': 'Bad Request',
         'message': str(e),
@@ -278,7 +247,6 @@ def bad_request(e):
 
 @app.errorhandler(401)
 def unauthorized(e):
-    """Handle unauthorized errors"""
     return jsonify({
         'error': 'Unauthorized',
         'message': 'Authentication required',
@@ -287,7 +255,6 @@ def unauthorized(e):
 
 @app.errorhandler(403)
 def forbidden(e):
-    """Handle forbidden errors"""
     return jsonify({
         'error': 'Forbidden',
         'message': 'You do not have permission to access this resource',
@@ -296,7 +263,6 @@ def forbidden(e):
 
 @app.errorhandler(404)
 def not_found(e):
-    """Handle not found errors"""
     return jsonify({
         'error': 'Not Found',
         'message': 'The requested resource was not found',
@@ -305,7 +271,6 @@ def not_found(e):
 
 @app.errorhandler(429)
 def ratelimit_handler(e):
-    """Handle rate limit errors"""
     return jsonify({
         'error': 'Too Many Requests',
         'message': f"Rate limit exceeded: {e.description}",
@@ -314,7 +279,6 @@ def ratelimit_handler(e):
 
 @app.errorhandler(500)
 def internal_error(e):
-    """Handle internal server errors"""
     db.session.rollback()
     app.logger.error(f"Internal error: {str(e)}", exc_info=True)
     return jsonify({
@@ -325,7 +289,6 @@ def internal_error(e):
 
 @app.errorhandler(Exception)
 def handle_exception(e):
-    """Handle all other exceptions"""
     if isinstance(e, HTTPException):
         return e
     
@@ -336,15 +299,11 @@ def handle_exception(e):
         'request_id': g.get('request_id')
     }), 500
 
-# User loader
 @login_manager.user_loader
 def load_user(user_id):
-    """Load user for Flask-Login"""
     return User.query.get(user_id)
 
-# Custom decorators
 def require_api_key(f):
-    """Decorator to require API key"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         api_key = request.headers.get('X-API-Key')
@@ -357,7 +316,6 @@ def require_api_key(f):
         if not user or not user.is_active:
             return jsonify({'error': 'Invalid API key'}), 401
         
-        # Check rate limit for API
         key = f"api_rate_limit:{user.id}"
         try:
             current = redis_client.incr(key)
@@ -375,7 +333,6 @@ def require_api_key(f):
     return decorated_function
 
 def permission_required(permission):
-    """Decorator to require specific permission"""
     def decorator(f):
         @wraps(f)
         @login_required
@@ -386,18 +343,25 @@ def permission_required(permission):
         return decorated_function
     return decorator
 
-def admin_required(f):
-    """Decorator to require admin role"""
+def manager_required(f):
     @wraps(f)
     @login_required
     def decorated_function(*args, **kwargs):
-        if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+        if current_user.role != UserRole.MANAGER:
+            abort(403)
+        return f(*args, **kwargs)
+    return decorated_function
+
+def admin_or_manager_required(f):
+    @wraps(f)
+    @login_required
+    def decorated_function(*args, **kwargs):
+        if current_user.role not in [UserRole.ADMIN, UserRole.MANAGER]:
             abort(403)
         return f(*args, **kwargs)
     return decorated_function
 
 def validate_json(*required_fields):
-    """Decorator to validate JSON input"""
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
@@ -414,44 +378,36 @@ def validate_json(*required_fields):
         return decorated_function
     return decorator
 
-# Authentication routes
 @app.route('/api/auth/register', methods=['POST'])
 @limiter.limit("5 per hour")
 @validate_json('email', 'password', 'name')
 def register():
-    """User registration with email verification"""
     data = request.get_json()
     
-    # Validate email
     try:
         valid = validate_email(data['email'])
         email = valid.email
     except:
         return jsonify({'error': 'Invalid email address'}), 400
     
-    # Check if user exists
     if User.query.filter_by(email=email).first():
         return jsonify({'error': 'Email already registered'}), 409
     
-    # Check if username exists
     username = data.get('username', email.split('@')[0])
     if User.query.filter_by(username=username).first():
         username = f"{username}_{secrets.token_hex(4)}"
     
     try:
-        # Create user
         user = User(
             email=email,
             username=username,
             name=bleach.clean(data['name']),
-            role=UserRole.VIEWER
+            role=UserRole.ADMIN
         )
         user.set_password(data['password'])
         
-        # Generate verification token
         verification_token = user.generate_auth_token(expires_in=86400)
         
-        # Send verification email (using Celery task)
         send_verification_email.delay(email, verification_token)
         
         db.session.add(user)
@@ -473,7 +429,6 @@ def register():
 @limiter.limit("10 per hour")
 @validate_json('email', 'password')
 def login():
-    """User login with session management"""
     data = request.get_json()
     
     user = User.query.filter_by(email=data['email']).first()
@@ -487,7 +442,6 @@ def login():
     if not user.is_verified:
         return jsonify({'error': 'Please verify your email first'}), 403
     
-    # Create session
     session_token = secrets.token_hex(32)
     user_session = UserSession(
         user_id=user.id,
@@ -500,11 +454,9 @@ def login():
     db.session.add(user_session)
     db.session.commit()
     
-    # Login user
     login_user(user, remember=True)
     session['session_token'] = session_token
     
-    # Generate JWT token
     access_token = user.generate_auth_token()
     
     return jsonify({
@@ -522,8 +474,6 @@ def login():
 @app.route('/api/auth/logout', methods=['POST'])
 @login_required
 def logout():
-    """User logout with session cleanup"""
-    # Invalidate current session
     if 'session_token' in session:
         UserSession.query.filter_by(
             session_token=session['session_token']
@@ -537,7 +487,6 @@ def logout():
 
 @app.route('/api/auth/verify/<token>', methods=['GET'])
 def verify_email(token):
-    """Verify email address"""
     user = User.verify_auth_token(token)
     
     if not user:
@@ -549,20 +498,16 @@ def verify_email(token):
     
     return jsonify({'message': 'Email verified successfully'}), 200
 
-# Public API routes
 @app.route('/api/health', methods=['GET'])
 @cache.cached(timeout=10)
 def health_check():
-    """Health check endpoint for monitoring"""
     try:
-        # Check database
         db.session.execute('SELECT 1')
         db_status = 'healthy'
     except:
         db_status = 'unhealthy'
     
     try:
-        # Check Redis
         redis_client.ping()
         redis_status = 'healthy'
     except:
@@ -581,12 +526,9 @@ def health_check():
 @app.route('/api/jobs', methods=['GET'])
 @cache.cached(timeout=60, query_string=True)
 def get_jobs():
-    """Get jobs with advanced filtering and pagination"""
-    # Parse query parameters
     page = request.args.get('page', 1, type=int)
     per_page = min(request.args.get('per_page', 20, type=int), 100)
     
-    # Filters
     category = request.args.get('category')
     location = request.args.get('location')
     company = request.args.get('company')
@@ -596,14 +538,12 @@ def get_jobs():
     sort_by = request.args.get('sort_by', 'created_at')
     order = request.args.get('order', 'desc')
     
-    # Build query
     query = Job.query.filter(
         Job.status == JobStatus.APPROVED,
         Job.expires_at > datetime.utcnow(),
         Job.deleted_at.is_(None)
     )
     
-    # Apply filters
     if category:
         query = query.filter(Job.category == category)
     
@@ -618,13 +558,11 @@ def get_jobs():
     if salary_min:
         query = query.filter(Job.salary_max >= salary_min)
     
-    # Full-text search
     if search:
         query = query.filter(
             db.func.to_tsvector('english', Job.title + ' ' + Job.description).match(search)
         )
     
-    # Sorting
     if sort_by == 'salary':
         order_column = Job.salary_max if order == 'desc' else Job.salary_min
     elif sort_by == 'quality':
@@ -637,10 +575,8 @@ def get_jobs():
     else:
         query = query.order_by(order_column.asc())
     
-    # Pagination
     paginated = query.paginate(page=page, per_page=per_page, error_out=False)
     
-    # Increment view count for displayed jobs
     job_ids = [job.id for job in paginated.items]
     if job_ids:
         Job.query.filter(Job.id.in_(job_ids)).update(
@@ -664,17 +600,14 @@ def get_jobs():
 @app.route('/api/jobs/<uuid:job_id>', methods=['GET'])
 @cache.cached(timeout=300)
 def get_job(job_id):
-    """Get single job details"""
     job = Job.query.filter_by(
         id=job_id,
         status=JobStatus.APPROVED
     ).first_or_404()
     
-    # Increment view count
     job.view_count += 1
     db.session.commit()
     
-    # Track event
     AnalyticsService.track_event(
         request,
         'job_view',
@@ -687,17 +620,14 @@ def get_job(job_id):
 @app.route('/api/jobs/<uuid:job_id>/apply', methods=['POST'])
 @limiter.limit("10 per hour")
 def apply_for_job(job_id):
-    """Apply for a job"""
     job = Job.query.filter_by(
         id=job_id,
         status=JobStatus.APPROVED
     ).first_or_404()
     
-    # Increment apply count
     job.apply_count += 1
     db.session.commit()
     
-    # Track event
     AnalyticsService.track_event(
         request,
         'job_apply',
@@ -706,7 +636,6 @@ def apply_for_job(job_id):
         value=1
     )
     
-    # Process application (send to external URL or save)
     if job.source_url:
         return jsonify({
             'message': 'Redirecting to application',
@@ -718,7 +647,6 @@ def apply_for_job(job_id):
 @app.route('/api/categories', methods=['GET'])
 @cache.cached(timeout=3600)
 def get_categories():
-    """Get job categories with counts"""
     categories = db.session.query(
         Job.category,
         db.func.count(Job.id).label('count')
@@ -733,27 +661,21 @@ def get_categories():
         for cat in categories if cat[0]
     ]), 200
 
-# Admin API routes
 @app.route('/api/admin/dashboard', methods=['GET'])
-@admin_required
+@admin_or_manager_required
 def admin_dashboard():
-    """Admin dashboard with comprehensive metrics"""
-    # Job statistics
     total_jobs = Job.query.count()
     pending_jobs = Job.query.filter_by(status=JobStatus.PENDING).count()
     approved_jobs = Job.query.filter_by(status=JobStatus.APPROVED).count()
     expired_jobs = Job.query.filter(Job.expires_at < datetime.utcnow()).count()
     
-    # User statistics
     total_users = User.query.count()
     active_users = User.query.filter_by(is_active=True).count()
     verified_users = User.query.filter_by(is_verified=True).count()
     
-    # Recent activity
     recent_jobs = Job.query.order_by(Job.created_at.desc()).limit(10).all()
     recent_users = User.query.order_by(User.created_at.desc()).limit(10).all()
     
-    # Analytics summary
     today = datetime.utcnow().date()
     week_ago = today - timedelta(days=7)
     analytics_summary = AnalyticsService.get_dashboard_metrics(
@@ -790,9 +712,8 @@ def admin_dashboard():
     }), 200
 
 @app.route('/api/admin/jobs', methods=['GET'])
-@admin_required
+@admin_or_manager_required
 def admin_get_jobs():
-    """Get all jobs for admin management"""
     page = request.args.get('page', 1, type=int)
     per_page = min(request.args.get('per_page', 50, type=int), 100)
     status = request.args.get('status')
@@ -821,10 +742,9 @@ def admin_get_jobs():
     }), 200
 
 @app.route('/api/admin/jobs', methods=['POST'])
-@admin_required
+@admin_or_manager_required
 @validate_json('title', 'description')
 def admin_create_job():
-    """Create new job"""
     data = request.get_json()
     
     try:
@@ -846,13 +766,10 @@ def admin_create_job():
             expires_at=datetime.utcnow() + timedelta(days=int(data.get('days_to_expire', 30)))
         )
         
-        # Generate slug
         job.slug = Job.generate_slug(job.title)
         
-        # Calculate quality score
         job.calculate_quality_score()
         
-        # Update search vector
         job.update_search_vector()
         
         db.session.add(job)
@@ -869,13 +786,11 @@ def admin_create_job():
         return jsonify({'error': 'Failed to create job'}), 500
 
 @app.route('/api/admin/jobs/<uuid:job_id>', methods=['PUT'])
-@admin_required
+@admin_or_manager_required
 def admin_update_job(job_id):
-    """Update job"""
     job = Job.query.get_or_404(job_id)
     data = request.get_json()
     
-    # Update allowed fields
     allowed_fields = [
         'title', 'description', 'category', 'company', 
         'location', 'salary_min', 'salary_max', 'job_type',
@@ -887,14 +802,11 @@ def admin_update_job(job_id):
             value = bleach.clean(data[field]) if isinstance(data[field], str) else data[field]
             setattr(job, field, value)
     
-    # Update slug if title changed
     if 'title' in data:
         job.slug = Job.generate_slug(job.title)
     
-    # Recalculate quality score
     job.calculate_quality_score()
     
-    # Update search vector
     job.update_search_vector()
     
     job.version += 1
@@ -910,9 +822,8 @@ def admin_update_job(job_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/jobs/<uuid:job_id>', methods=['DELETE'])
-@admin_required
+@admin_or_manager_required
 def admin_delete_job(job_id):
-    """Soft delete job"""
     job = Job.query.get_or_404(job_id)
     
     job.soft_delete()
@@ -920,9 +831,8 @@ def admin_delete_job(job_id):
     return jsonify({'message': 'Job deleted successfully'}), 200
 
 @app.route('/api/admin/jobs/<uuid:job_id>/approve', methods=['POST'])
-@admin_required
+@admin_or_manager_required
 def admin_approve_job(job_id):
-    """Approve or reject job"""
     job = Job.query.get_or_404(job_id)
     data = request.get_json()
     
@@ -945,10 +855,9 @@ def admin_approve_job(job_id):
     }), 200
 
 @app.route('/api/admin/jobs/bulk-approve', methods=['POST'])
-@admin_required
+@admin_or_manager_required
 @validate_json('job_ids', 'action')
 def admin_bulk_approve_jobs():
-    """Bulk approve/reject jobs"""
     data = request.get_json()
     job_ids = data['job_ids']
     action = data['action']
@@ -979,13 +888,11 @@ def admin_bulk_approve_jobs():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/fetch-jobs', methods=['POST'])
-@admin_required
+@admin_or_manager_required
 def admin_fetch_jobs():
-    """Manually trigger job fetching"""
     data = request.get_json()
     source = data.get('source', 'all')
     
-    # Queue job fetching task
     fetch_jobs_task.delay(source)
     
     return jsonify({
@@ -993,9 +900,8 @@ def admin_fetch_jobs():
     }), 202
 
 @app.route('/api/admin/users', methods=['GET'])
-@admin_required
+@admin_or_manager_required
 def admin_get_users():
-    """Get all users"""
     page = request.args.get('page', 1, type=int)
     per_page = min(request.args.get('per_page', 50, type=int), 100)
     role = request.args.get('role')
@@ -1032,18 +938,15 @@ def admin_get_users():
     }), 200
 
 @app.route('/api/admin/users/<uuid:user_id>', methods=['PUT'])
-@admin_required
+@admin_or_manager_required
 def admin_update_user(user_id):
-    """Update user"""
     user = User.query.get_or_404(user_id)
     data = request.get_json()
     
-    # Prevent modifying super admin
-    if user.role == UserRole.SUPER_ADMIN and current_user.role != UserRole.SUPER_ADMIN:
-        return jsonify({'error': 'Cannot modify super admin'}), 403
+    if user.role == UserRole.MANAGER and current_user.role != UserRole.MANAGER:
+        return jsonify({'error': 'Cannot modify manager'}), 403
     
-    # Update fields
-    if 'role' in data and current_user.role == UserRole.SUPER_ADMIN:
+    if 'role' in data and current_user.role == UserRole.MANAGER:
         user.role = UserRole[data['role'].upper()]
     
     if 'is_active' in data:
@@ -1060,26 +963,20 @@ def admin_update_user(user_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/users/<uuid:user_id>', methods=['DELETE'])
-@permission_required('delete_users')
+@manager_required
 def admin_delete_user(user_id):
-    """Delete user"""
     user = User.query.get_or_404(user_id)
     
-    # Prevent deleting super admin
-    if user.role == UserRole.SUPER_ADMIN:
-        return jsonify({'error': 'Cannot delete super admin'}), 403
+    if user.role == UserRole.MANAGER:
+        return jsonify({'error': 'Cannot delete manager'}), 403
     
-    # Soft delete
     user.soft_delete()
     
     return jsonify({'message': 'User deleted successfully'}), 200
 
-# Manager API routes
 @app.route('/api/manager/analytics', methods=['GET'])
 @permission_required('view_analytics')
 def manager_analytics():
-    """Get analytics dashboard"""
-    # Parse date range
     date_from = request.args.get('from')
     date_to = request.args.get('to')
     
@@ -1093,10 +990,8 @@ def manager_analytics():
     else:
         date_to = datetime.utcnow()
     
-    # Get metrics
     metrics = AnalyticsService.get_dashboard_metrics(date_from, date_to)
     
-    # Get ad performance
     ads_performance = db.session.query(
         Ad.ad_type,
         db.func.sum(Ad.impressions).label('impressions'),
@@ -1107,7 +1002,6 @@ def manager_analytics():
         Ad.date.between(date_from.date(), date_to.date())
     ).group_by(Ad.ad_type).all()
     
-    # Get job performance
     job_performance = db.session.query(
         db.func.sum(Job.view_count).label('total_views'),
         db.func.sum(Job.apply_count).label('total_applies'),
@@ -1138,15 +1032,50 @@ def manager_analytics():
         }
     }), 200
 
+@app.route('/api/manager/admin-permissions/<uuid:admin_id>', methods=['PUT'])
+@manager_required
+def update_admin_permissions(admin_id):
+    data = request.get_json()
+    
+    try:
+        current_user.update_admin_permissions(str(admin_id), data)
+        return jsonify({'message': 'Admin permissions updated successfully'}), 200
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': 'Failed to update permissions'}), 500
+
+@app.route('/api/manager/admins', methods=['GET'])
+@manager_required
+def get_all_admins():
+    admins = User.query.filter_by(role=UserRole.ADMIN).all()
+    
+    return jsonify({
+        'admins': [
+            {
+                'id': str(admin.id),
+                'username': admin.username,
+                'email': admin.email,
+                'name': admin.name,
+                'is_active': admin.is_active,
+                'permissions': {
+                    'can_post_jobs': admin.can_post_jobs,
+                    'can_edit_jobs': admin.can_edit_jobs,
+                    'can_delete_jobs': admin.can_delete_jobs,
+                    'can_view_analytics': admin.can_view_analytics,
+                    'can_manage_ads': admin.can_manage_ads
+                }
+            } for admin in admins
+        ]
+    }), 200
+
 @app.route('/api/manager/analytics/export', methods=['GET'])
-@permission_required('export_analytics')
+@permission_required('view_analytics')
 def export_analytics():
-    """Export analytics data"""
     format = request.args.get('format', 'csv')
     date_from = request.args.get('from', (datetime.utcnow() - timedelta(days=30)).isoformat())
     date_to = request.args.get('to', datetime.utcnow().isoformat())
     
-    # Queue export task
     export_task_id = export_analytics_task.delay(
         current_user.id,
         date_from,
@@ -1160,10 +1089,8 @@ def export_analytics():
     }), 202
 
 @app.route('/api/manager/backup', methods=['POST'])
-@permission_required('manage_backups')
+@manager_required
 def create_backup():
-    """Create database backup"""
-    # Queue backup task
     backup_task.delay()
     
     return jsonify({
@@ -1171,9 +1098,8 @@ def create_backup():
     }), 202
 
 @app.route('/api/manager/audit-logs', methods=['GET'])
-@permission_required('view_audit_logs')
+@manager_required
 def get_audit_logs():
-    """Get audit logs"""
     page = request.args.get('page', 1, type=int)
     per_page = min(request.args.get('per_page', 50, type=int), 100)
     table_name = request.args.get('table')
@@ -1205,11 +1131,9 @@ def get_audit_logs():
         }
     }), 200
 
-# Ad tracking endpoints
 @app.route('/api/ads/impression', methods=['POST'])
 @limiter.limit("1000 per minute")
 def track_ad_impression():
-    """Track ad impression"""
     data = request.get_json()
     ad_type = data.get('ad_type', 'banner')
     campaign_id = data.get('campaign_id')
@@ -1218,7 +1142,6 @@ def track_ad_impression():
         today = datetime.utcnow().date()
         hour = datetime.utcnow().hour
         
-        # Find or create ad record
         ad = Ad.query.filter_by(
             ad_type=AdType[ad_type.upper()],
             campaign_id=campaign_id,
@@ -1250,7 +1173,6 @@ def track_ad_impression():
 @app.route('/api/ads/click', methods=['POST'])
 @limiter.limit("100 per minute")
 def track_ad_click():
-    """Track ad click"""
     data = request.get_json()
     ad_type = data.get('ad_type', 'banner')
     campaign_id = data.get('campaign_id')
@@ -1271,7 +1193,6 @@ def track_ad_click():
             ad.calculate_metrics()
             db.session.commit()
         
-        # Track in analytics
         AnalyticsService.track_event(
             request,
             'ad_click',
@@ -1285,11 +1206,9 @@ def track_ad_click():
         app.logger.error(f"Ad click tracking error: {str(e)}")
         return jsonify({'status': 'error'}), 200
 
-# Webhook endpoints
 @app.route('/api/webhooks/stripe', methods=['POST'])
 @csrf.exempt
 def stripe_webhook():
-    """Handle Stripe webhooks"""
     payload = request.get_data(as_text=True)
     sig_header = request.headers.get('Stripe-Signature')
     
@@ -1298,15 +1217,12 @@ def stripe_webhook():
             payload, sig_header, app.config['STRIPE_WEBHOOK_SECRET']
         )
         
-        # Handle different event types
         if event['type'] == 'payment_intent.succeeded':
             payment_intent = event['data']['object']
-            # Process successful payment
             app.logger.info(f"Payment succeeded: {payment_intent['id']}")
         
         elif event['type'] == 'customer.subscription.created':
             subscription = event['data']['object']
-            # Process new subscription
             app.logger.info(f"Subscription created: {subscription['id']}")
         
         return jsonify({'status': 'success'}), 200
@@ -1316,10 +1232,8 @@ def stripe_webhook():
     except stripe.error.SignatureVerificationError:
         return jsonify({'error': 'Invalid signature'}), 400
 
-# Celery tasks
 @celery.task(bind=True, max_retries=3)
 def fetch_jobs_task(self, source='all'):
-    """Async task to fetch jobs"""
     try:
         fetcher = JobFetcherService()
         jobs = []
@@ -1368,7 +1282,6 @@ def fetch_jobs_task(self, source='all'):
             ]
             jobs.extend(fetcher.scrape_websites_intelligent(scraper_configs))
         
-        # Save jobs to database
         if jobs:
             Job.bulk_insert(jobs)
             app.logger.info(f"Fetched and saved {len(jobs)} jobs from {source}")
@@ -1381,10 +1294,7 @@ def fetch_jobs_task(self, source='all'):
 
 @celery.task
 def send_verification_email(email, token):
-    """Send email verification"""
     try:
-        # Implement email sending logic
-        # Using SendGrid, AWS SES, or other email service
         app.logger.info(f"Verification email sent to {email}")
         return True
     except Exception as e:
@@ -1393,11 +1303,7 @@ def send_verification_email(email, token):
 
 @celery.task
 def export_analytics_task(user_id, date_from, date_to, format):
-    """Export analytics data"""
     try:
-        # Generate export file
-        # Upload to cloud storage
-        # Send notification to user
         app.logger.info(f"Analytics exported for user {user_id}")
         return {'status': 'success'}
     except Exception as e:
@@ -1406,7 +1312,6 @@ def export_analytics_task(user_id, date_from, date_to, format):
 
 @celery.task
 def backup_task():
-    """Perform database backup"""
     try:
         backup_file = DatabaseMaintenance.backup_database()
         if backup_file:
@@ -1418,16 +1323,12 @@ def backup_task():
 
 @celery.task
 def cleanup_task():
-    """Periodic cleanup task"""
     try:
         DatabaseMaintenance.clean_old_data(days=90)
-        DatabaseMaintenance.vacuum_analyze()
-        DatabaseMaintenance.update_statistics()
         app.logger.info("Cleanup task completed")
     except Exception as e:
         app.logger.error(f"Cleanup failed: {str(e)}")
 
-# Scheduled tasks
 scheduler.add_job(
     func=lambda: fetch_jobs_task.delay('all'),
     trigger='interval',
@@ -1454,49 +1355,44 @@ scheduler.add_job(
     replace_existing=True
 )
 
-# CLI commands
 @app.cli.command()
 def init_db():
-    """Initialize database"""
     db.create_all()
     print("Database initialized")
 
 @app.cli.command()
-def create_superadmin():
-    """Create super admin user"""
-    import getpass
-    
-    email = input("Email: ")
-    username = input("Username: ")
-    name = input("Name: ")
-    password = getpass.getpass("Password: ")
-    
+def create_default_accounts():
+    if User.create_default_accounts():
+        print("Default accounts created successfully:")
+        print("Manager - Username: manager, Password: Manager@123")
+        print("Admin - Username: admin, Password: Admin@123")
+        print("\n⚠️  Please change these passwords after first login!")
+    else:
+        print("Failed to create default accounts")
+
+@app.cli.command()
+def init_system():
     try:
-        user = User(
-            email=email,
-            username=username,
-            name=name,
-            role=UserRole.SUPER_ADMIN,
-            is_active=True,
-            is_verified=True,
-            email_verified_at=datetime.utcnow()
-        )
-        user.set_password(password)
+        db.create_all()
+        print("✅ Database tables created")
         
-        db.session.add(user)
-        db.session.commit()
-        
-        print(f"Super admin created: {email}")
+        if User.create_default_accounts():
+            print("✅ Default accounts created")
+            print("\nDefault Credentials:")
+            print("Manager - Username: manager, Password: Manager@123")
+            print("Admin - Username: admin, Password: Admin@123")
+            print("\n⚠️  Please change these passwords after first login!")
+        else:
+            print("❌ Failed to create default accounts")
+            
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"❌ System initialization failed: {str(e)}")
 
 @app.cli.command()
 def seed_data():
-    """Seed sample data"""
     from faker import Faker
     fake = Faker()
     
-    # Create sample jobs
     for _ in range(100):
         job = Job(
             title=fake.job(),
@@ -1516,12 +1412,9 @@ def seed_data():
     db.session.commit()
     print("Sample data seeded")
 
-# Application factory pattern support
 def create_app(config_name='production'):
-    """Create Flask application"""
     app.config.from_object(Config)
     
-    # Initialize extensions with app
     db.init_app(app)
     migrate.init_app(app, db)
     login_manager.init_app(app)
@@ -1532,9 +1425,7 @@ def create_app(config_name='production'):
     
     return app
 
-# Main entry point
 if __name__ == '__main__':
-    # Development server (use Gunicorn in production)
     app.run(
         host='0.0.0.0',
         port=int(os.getenv('PORT', 5000)),

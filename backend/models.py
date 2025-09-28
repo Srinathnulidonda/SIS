@@ -1,3 +1,4 @@
+# backend/models.py
 import os
 import uuid
 import hashlib
@@ -31,10 +32,8 @@ import aiohttp
 from cryptography.fernet import Fernet
 import jwt
 
-# Initialize extensions
 db = SQLAlchemy()
 
-# Initialize Redis with error handling
 try:
     redis_client = redis.Redis.from_url(
         os.getenv('REDIS_URL', 'redis://red-d3cikjqdbo4c73e72slg:mirq8x6uekGSDV0O3eb1eVjUG3GuYkVe@red-d3cikjqdbo4c73e72slg:6379'),
@@ -42,7 +41,6 @@ try:
     )
     redis_client.ping()
 except:
-    # Fallback to mock redis client if Redis is not available
     class MockRedis:
         def get(self, key):
             return None
@@ -62,26 +60,20 @@ except:
     redis_client = MockRedis()
     logging.warning("Redis not available, using mock client")
 
-# Configure structured logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Encryption key for sensitive data
 ENCRYPTION_KEY = os.getenv('ENCRYPTION_KEY', Fernet.generate_key())
 if isinstance(ENCRYPTION_KEY, str):
     ENCRYPTION_KEY = ENCRYPTION_KEY.encode()
 cipher_suite = Fernet(ENCRYPTION_KEY)
 
-# Enums for better type safety
 class UserRole(Enum):
-    SUPER_ADMIN = 'super_admin'
-    ADMIN = 'admin'
     MANAGER = 'manager'
-    EDITOR = 'editor'
-    VIEWER = 'viewer'
+    ADMIN = 'admin'
 
 class JobStatus(Enum):
     DRAFT = 'draft'
@@ -105,9 +97,7 @@ class AdType(Enum):
     NATIVE = 'native'
     VIDEO = 'video'
 
-# Base model with common fields
 class BaseModel(db.Model):
-    """Abstract base model with common fields and methods"""
     __abstract__ = True
     
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -136,17 +126,14 @@ class BaseModel(db.Model):
         return self.deleted_at is not None
     
     def soft_delete(self):
-        """Soft delete the record"""
         self.deleted_at = datetime.utcnow()
         db.session.commit()
     
     def restore(self):
-        """Restore soft deleted record"""
         self.deleted_at = None
         db.session.commit()
     
     def to_dict(self, exclude: List[str] = None) -> Dict:
-        """Convert model to dictionary"""
         exclude = exclude or []
         data = {}
         for column in self.__table__.columns:
@@ -164,7 +151,6 @@ class BaseModel(db.Model):
         return data
     
     def update_from_dict(self, data: Dict, allowed_fields: List[str] = None):
-        """Update model from dictionary with field validation"""
         allowed_fields = allowed_fields or []
         for key, value in data.items():
             if hasattr(self, key) and (not allowed_fields or key in allowed_fields):
@@ -174,7 +160,6 @@ class BaseModel(db.Model):
     
     @classmethod
     def bulk_insert(cls, records: List[Dict]) -> int:
-        """Bulk insert records for better performance"""
         if not records:
             return 0
         
@@ -187,15 +172,13 @@ class BaseModel(db.Model):
             logger.error(f"Bulk insert failed: {str(e)}")
             raise
 
-# Audit log model for tracking changes
 class AuditLog(BaseModel):
-    """Track all database changes for compliance"""
     __tablename__ = 'audit_logs'
     
     user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'))
     table_name = db.Column(db.String(100), nullable=False, index=True)
     record_id = db.Column(UUID(as_uuid=True), nullable=False, index=True)
-    action = db.Column(db.String(20), nullable=False)  # CREATE, UPDATE, DELETE
+    action = db.Column(db.String(20), nullable=False)
     old_values = db.Column(JSONB)
     new_values = db.Column(JSONB)
     ip_address = db.Column(INET)
@@ -206,48 +189,43 @@ class AuditLog(BaseModel):
         Index('idx_audit_user_action', 'user_id', 'action'),
     )
 
-# User model with advanced features
 class User(UserMixin, BaseModel):
-    """Enhanced user model with security features"""
     __tablename__ = 'users'
     
-    # Basic fields
     username = db.Column(db.String(50), unique=True, nullable=False, index=True)
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
     name = db.Column(db.String(100), nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.Enum(UserRole), default=UserRole.VIEWER, nullable=False)
+    role = db.Column(db.Enum(UserRole), default=UserRole.ADMIN, nullable=False)
     
-    # Security fields
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     is_verified = db.Column(db.Boolean, default=False, nullable=False)
     email_verified_at = db.Column(db.DateTime(timezone=True))
-    two_factor_enabled = db.Column(db.Boolean, default=False)
-    two_factor_secret = db.Column(db.String(32))
     
-    # Profile fields
+    can_post_jobs = db.Column(db.Boolean, default=True)
+    can_edit_jobs = db.Column(db.Boolean, default=True)
+    can_delete_jobs = db.Column(db.Boolean, default=False)
+    can_view_analytics = db.Column(db.Boolean, default=False)
+    can_manage_ads = db.Column(db.Boolean, default=False)
+    
     phone = db.Column(db.String(20))
     avatar_url = db.Column(db.String(500))
     bio = db.Column(db.Text)
-    user_metadata = db.Column(JSONB, default=dict)  # Renamed from metadata to avoid SQLAlchemy conflict
+    user_metadata = db.Column(JSONB, default=dict)
     
-    # Session management
     last_login_at = db.Column(db.DateTime(timezone=True))
     last_login_ip = db.Column(INET)
     login_count = db.Column(db.Integer, default=0)
     failed_login_count = db.Column(db.Integer, default=0)
     locked_until = db.Column(db.DateTime(timezone=True))
     
-    # API access
     api_key = db.Column(db.String(64), unique=True, index=True)
     api_key_created_at = db.Column(db.DateTime(timezone=True))
     api_rate_limit = db.Column(db.Integer, default=1000)
     
-    # Relationships
     jobs = db.relationship('Job', backref='creator', lazy='dynamic', foreign_keys='Job.created_by')
     audit_logs = db.relationship('AuditLog', backref='user', lazy='dynamic')
     sessions = db.relationship('UserSession', backref='user', lazy='dynamic', cascade='all, delete-orphan')
-    permissions = db.relationship('UserPermission', backref='user', lazy='dynamic', cascade='all, delete-orphan')
     
     __table_args__ = (
         CheckConstraint('char_length(username) >= 3', name='username_min_length'),
@@ -257,7 +235,6 @@ class User(UserMixin, BaseModel):
     )
     
     def validate_email_field(self, email):
-        """Validate email format - simplified without external dependency"""
         import re
         email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
         if not re.match(email_regex, email):
@@ -266,12 +243,10 @@ class User(UserMixin, BaseModel):
     
     @validates('email')
     def validate_email(self, key, email):
-        """SQLAlchemy validator for email"""
         return self.validate_email_field(email)
     
     @validates('username')
     def validate_username(self, key, username):
-        """Validate username"""
         if not username or len(username) < 3:
             raise ValueError("Username must be at least 3 characters long")
         if not username.replace('_', '').isalnum():
@@ -279,11 +254,9 @@ class User(UserMixin, BaseModel):
         return username.lower()
     
     def set_password(self, password: str):
-        """Set password with strength validation"""
         if len(password) < 8:
             raise ValueError("Password must be at least 8 characters long")
         
-        # Check password strength
         has_upper = any(c.isupper() for c in password)
         has_lower = any(c.islower() for c in password)
         has_digit = any(c.isdigit() for c in password)
@@ -294,7 +267,6 @@ class User(UserMixin, BaseModel):
         self.password_hash = generate_password_hash(password, method='pbkdf2:sha256', salt_length=16)
     
     def check_password(self, password: str) -> bool:
-        """Check password with rate limiting"""
         if self.is_locked():
             return False
         
@@ -314,25 +286,21 @@ class User(UserMixin, BaseModel):
         return is_valid
     
     def is_locked(self) -> bool:
-        """Check if account is locked"""
         if self.locked_until and self.locked_until > datetime.utcnow():
             return True
         return False
     
     def lock_account(self, minutes: int = 30):
-        """Lock account for specified minutes"""
         self.locked_until = datetime.utcnow() + timedelta(minutes=minutes)
         logger.warning(f"Account locked for user {self.username}")
     
     def generate_api_key(self) -> str:
-        """Generate new API key"""
         self.api_key = hashlib.sha256(f"{self.id}{datetime.utcnow()}".encode()).hexdigest()
         self.api_key_created_at = datetime.utcnow()
         db.session.commit()
         return self.api_key
     
     def generate_auth_token(self, expires_in: int = 3600) -> str:
-        """Generate JWT authentication token"""
         payload = {
             'user_id': str(self.id),
             'username': self.username,
@@ -343,7 +311,6 @@ class User(UserMixin, BaseModel):
     
     @staticmethod
     def verify_auth_token(token: str) -> Optional['User']:
-        """Verify JWT token and return user"""
         try:
             payload = jwt.decode(token, os.getenv('JWT_SECRET_KEY', 'dev-secret'), algorithms=['HS256'])
             return User.query.get(payload['user_id'])
@@ -351,40 +318,97 @@ class User(UserMixin, BaseModel):
             return None
     
     def has_permission(self, permission: str) -> bool:
-        """Check if user has specific permission"""
-        # Super admin has all permissions
-        if self.role == UserRole.SUPER_ADMIN:
+        if self.role == UserRole.MANAGER:
             return True
         
-        # Check role-based permissions
-        role_permissions = {
-            UserRole.ADMIN: ['manage_users', 'manage_jobs', 'view_analytics', 'manage_ads'],
-            UserRole.MANAGER: ['manage_jobs', 'view_analytics', 'manage_ads'],
-            UserRole.EDITOR: ['create_jobs', 'edit_jobs', 'view_analytics'],
-            UserRole.VIEWER: ['view_jobs', 'view_basic_analytics']
-        }
+        if self.role == UserRole.ADMIN:
+            admin_permissions = {
+                'post_jobs': self.can_post_jobs,
+                'edit_jobs': self.can_edit_jobs,
+                'delete_jobs': self.can_delete_jobs,
+                'view_analytics': self.can_view_analytics,
+                'manage_ads': self.can_manage_ads,
+                'view_jobs': True,
+                'view_dashboard': True,
+            }
+            return admin_permissions.get(permission, False)
         
-        if self.role in role_permissions and permission in role_permissions[self.role]:
-            return True
-        
-        # Check specific user permissions
-        return self.permissions.filter_by(permission=permission, granted=True).first() is not None
+        return False
     
     def get_active_sessions(self) -> List['UserSession']:
-        """Get all active sessions for user"""
         return self.sessions.filter(
             UserSession.expires_at > datetime.utcnow(),
             UserSession.is_active == True
         ).all()
     
     def revoke_all_sessions(self):
-        """Revoke all user sessions"""
         self.sessions.update({UserSession.is_active: False})
         db.session.commit()
+    
+    @classmethod
+    def create_default_accounts(cls):
+        try:
+            manager = cls.query.filter_by(username='manager').first()
+            if not manager:
+                manager = cls(
+                    username='manager',
+                    email='manager@sridhar.com',
+                    name='System Manager',
+                    role=UserRole.MANAGER,
+                    is_active=True,
+                    is_verified=True,
+                    email_verified_at=datetime.utcnow()
+                )
+                manager.set_password('Manager@123')
+                db.session.add(manager)
+                logger.info("Default manager account created")
+            
+            admin = cls.query.filter_by(username='admin').first()
+            if not admin:
+                admin = cls(
+                    username='admin',
+                    email='admin@sridhar.com',
+                    name='System Admin',
+                    role=UserRole.ADMIN,
+                    is_active=True,
+                    is_verified=True,
+                    email_verified_at=datetime.utcnow(),
+                    can_post_jobs=True,
+                    can_edit_jobs=True,
+                    can_delete_jobs=False,
+                    can_view_analytics=False,
+                    can_manage_ads=False
+                )
+                admin.set_password('Admin@123')
+                db.session.add(admin)
+                logger.info("Default admin account created")
+            
+            db.session.commit()
+            return True
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Failed to create default accounts: {str(e)}")
+            return False
+    
+    def update_admin_permissions(self, admin_user_id: str, permissions: Dict[str, bool]):
+        if self.role != UserRole.MANAGER:
+            raise ValueError("Only managers can update admin permissions")
+        
+        admin = User.query.get(admin_user_id)
+        if not admin or admin.role != UserRole.ADMIN:
+            raise ValueError("Admin user not found")
+        
+        admin.can_post_jobs = permissions.get('can_post_jobs', admin.can_post_jobs)
+        admin.can_edit_jobs = permissions.get('can_edit_jobs', admin.can_edit_jobs)
+        admin.can_delete_jobs = permissions.get('can_delete_jobs', admin.can_delete_jobs)
+        admin.can_view_analytics = permissions.get('can_view_analytics', admin.can_view_analytics)
+        admin.can_manage_ads = permissions.get('can_manage_ads', admin.can_manage_ads)
+        
+        db.session.commit()
+        logger.info(f"Admin permissions updated for {admin.username} by {self.username}")
 
-# User session management
 class UserSession(BaseModel):
-    """Track user sessions for security"""
     __tablename__ = 'user_sessions'
     
     user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'), nullable=False)
@@ -401,28 +425,9 @@ class UserSession(BaseModel):
         Index('idx_session_token_active', 'session_token', 'is_active'),
     )
 
-# User permissions for fine-grained access control
-class UserPermission(BaseModel):
-    """Granular permission system"""
-    __tablename__ = 'user_permissions'
-    
-    user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'), nullable=False)
-    permission = db.Column(db.String(100), nullable=False)
-    granted = db.Column(db.Boolean, default=True)
-    granted_by = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'))
-    expires_at = db.Column(db.DateTime(timezone=True))
-    
-    __table_args__ = (
-        UniqueConstraint('user_id', 'permission', name='unique_user_permission'),
-        Index('idx_permission_user', 'user_id', 'permission'),
-    )
-
-# Enhanced Job model  
 class Job(BaseModel):
-    """Job posting model with full-text search and versioning"""
     __tablename__ = 'jobs'
     
-    # Basic fields
     title = db.Column(db.String(200), nullable=False, index=True)
     slug = db.Column(db.String(250), unique=True, nullable=False, index=True)
     category = db.Column(db.String(100), index=True)
@@ -430,41 +435,34 @@ class Job(BaseModel):
     description = db.Column(db.Text)
     requirements = db.Column(db.Text)
     
-    # Job details
     company = db.Column(db.String(200))
     location = db.Column(db.String(200))
     salary_min = db.Column(db.Numeric(10, 2))
     salary_max = db.Column(db.Numeric(10, 2))
     salary_currency = db.Column(db.String(3), default='INR')
-    job_type = db.Column(db.String(50))  # full-time, part-time, contract
+    job_type = db.Column(db.String(50))
     experience_required = db.Column(db.String(50))
     
-    # Source and status
     source = db.Column(db.Enum(JobSource), default=JobSource.MANUAL, nullable=False)
     source_url = db.Column(db.String(500))
     status = db.Column(db.Enum(JobStatus), default=JobStatus.PENDING, nullable=False, index=True)
     
-    # Dates
     posted_date = db.Column(db.DateTime(timezone=True))
     expires_at = db.Column(db.DateTime(timezone=True), index=True)
     approved_at = db.Column(db.DateTime(timezone=True))
     
-    # Relationships
     created_by = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'))
     approved_by = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'))
     
-    # SEO and metadata
     meta_title = db.Column(db.String(160))
     meta_description = db.Column(db.String(320))
     tags = db.Column(JSONB, default=list)
-    job_metadata = db.Column(JSONB, default=dict)  # Renamed from metadata to avoid conflicts
+    job_metadata = db.Column(JSONB, default=dict)
     
-    # Analytics
     view_count = db.Column(db.Integer, default=0)
     apply_count = db.Column(db.Integer, default=0)
     share_count = db.Column(db.Integer, default=0)
     
-    # Quality score
     quality_score = db.Column(db.Float, default=0.0)
     
     __table_args__ = (
@@ -475,19 +473,16 @@ class Job(BaseModel):
     
     @validates('slug')
     def validate_slug(self, key, slug):
-        """Generate and validate slug"""
         if not slug and self.title:
             slug = self.generate_slug(self.title)
         return slug
     
     @staticmethod
     def generate_slug(title: str) -> str:
-        """Generate URL-friendly slug"""
         import re
         slug = re.sub(r'[^\w\s-]', '', title.lower())
         slug = re.sub(r'[-\s]+', '-', slug)
         
-        # Ensure uniqueness
         base_slug = slug
         counter = 1
         while Job.query.filter_by(slug=slug).first():
@@ -497,10 +492,8 @@ class Job(BaseModel):
         return slug
     
     def calculate_quality_score(self) -> float:
-        """Calculate job quality score based on completeness"""
         score = 0.0
         
-        # Check field completeness
         if self.title: score += 10
         if self.description and len(self.description) > 100: score += 20
         if self.requirements: score += 10
@@ -515,12 +508,10 @@ class Job(BaseModel):
         return self.quality_score
     
     def update_search_vector(self):
-        """Update full-text search vector - placeholder for PostgreSQL implementation"""
         pass
     
     @hybrid_property
     def is_active(self):
-        """Check if job is currently active"""
         return (
             self.status == JobStatus.APPROVED and
             (self.expires_at is None or self.expires_at > datetime.utcnow()) and
@@ -529,10 +520,8 @@ class Job(BaseModel):
     
     @classmethod
     def search(cls, query: str, filters: Dict = None) -> List['Job']:
-        """Advanced search with filters"""
         search_query = cls.query
         
-        # Simple text search (can be enhanced with PostgreSQL full-text search)
         if query:
             search_query = search_query.filter(
                 or_(
@@ -542,7 +531,6 @@ class Job(BaseModel):
                 )
             )
         
-        # Apply filters
         if filters:
             if filters.get('category'):
                 search_query = search_query.filter_by(category=filters['category'])
@@ -553,7 +541,6 @@ class Job(BaseModel):
             if filters.get('job_type'):
                 search_query = search_query.filter_by(job_type=filters['job_type'])
         
-        # Only active jobs
         search_query = search_query.filter(
             cls.status == JobStatus.APPROVED,
             or_(cls.expires_at.is_(None), cls.expires_at > datetime.utcnow()),
@@ -562,31 +549,25 @@ class Job(BaseModel):
         
         return search_query.order_by(desc(cls.quality_score), desc(cls.created_at)).all()
 
-# Enhanced Ads model
 class Ad(BaseModel):
-    """Advertisement tracking with advanced analytics"""
     __tablename__ = 'ads'
     
     ad_type = db.Column(db.Enum(AdType), nullable=False, index=True)
     campaign_id = db.Column(db.String(100), index=True)
     advertiser = db.Column(db.String(200))
     
-    # Metrics
     impressions = db.Column(db.BigInteger, default=0)
     clicks = db.Column(db.BigInteger, default=0)
     conversions = db.Column(db.BigInteger, default=0)
     revenue = db.Column(db.Numeric(10, 2), default=0)
     
-    # Targeting
     target_audience = db.Column(JSONB, default=dict)
     placement = db.Column(db.String(100))
     
-    # Performance
-    ctr = db.Column(db.Float, default=0.0)  # Click-through rate
+    ctr = db.Column(db.Float, default=0.0)
     conversion_rate = db.Column(db.Float, default=0.0)
-    ecpm = db.Column(db.Numeric(10, 2), default=0)  # Effective cost per mille
+    ecpm = db.Column(db.Numeric(10, 2), default=0)
     
-    # Time-based aggregation
     date = db.Column(db.Date, nullable=False, index=True)
     hour = db.Column(db.Integer)
     
@@ -597,7 +578,6 @@ class Ad(BaseModel):
     )
     
     def calculate_metrics(self):
-        """Calculate performance metrics"""
         if self.impressions > 0:
             self.ctr = (self.clicks / self.impressions) * 100
             self.ecpm = (self.revenue / self.impressions) * 1000
@@ -605,45 +585,36 @@ class Ad(BaseModel):
         if self.clicks > 0:
             self.conversion_rate = (self.conversions / self.clicks) * 100
 
-# Enhanced Analytics model
 class Analytics(BaseModel):
-    """Comprehensive analytics tracking"""
     __tablename__ = 'analytics'
     
-    # User identification
     user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'))
     session_id = db.Column(db.String(100), index=True)
     user_ip = db.Column(INET, index=True)
     
-    # Event tracking
-    event_type = db.Column(db.String(50), nullable=False, index=True)  # pageview, click, scroll, etc.
+    event_type = db.Column(db.String(50), nullable=False, index=True)
     event_category = db.Column(db.String(50))
     event_label = db.Column(db.String(200))
     event_value = db.Column(db.Numeric(10, 2))
     
-    # Page tracking
     page_url = db.Column(db.String(500), index=True)
     page_title = db.Column(db.String(200))
     referrer = db.Column(db.String(500))
     
-    # Device and browser
     user_agent = db.Column(db.String(500))
-    device_type = db.Column(db.String(50))  # desktop, mobile, tablet
+    device_type = db.Column(db.String(50))
     browser = db.Column(db.String(50))
     os = db.Column(db.String(50))
     screen_resolution = db.Column(db.String(20))
     
-    # Geographic
     country = db.Column(db.String(2))
     region = db.Column(db.String(100))
     city = db.Column(db.String(100))
     timezone = db.Column(db.String(50))
     
-    # Performance
-    page_load_time = db.Column(db.Integer)  # milliseconds
+    page_load_time = db.Column(db.Integer)
     dom_ready_time = db.Column(db.Integer)
     
-    # Custom dimensions
     custom_data = db.Column(JSONB, default=dict)
     
     __table_args__ = (
@@ -653,10 +624,7 @@ class Analytics(BaseModel):
         Index('idx_analytics_page', 'page_url', 'created_at'),
     )
 
-# Job fetching service with advanced features
 class JobFetcherService:
-    """Enterprise-grade job fetching service"""
-    
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
@@ -666,7 +634,6 @@ class JobFetcherService:
     @staticmethod
     @lru_cache(maxsize=128)
     def get_cached_response(url: str, cache_time: int = 3600) -> Optional[str]:
-        """Get cached response from Redis"""
         cache_key = f"fetch:{hashlib.md5(url.encode()).hexdigest()}"
         cached = redis_client.get(cache_key)
         
@@ -677,12 +644,10 @@ class JobFetcherService:
         return None
     
     def set_cache(self, url: str, content: str, ttl: int = 3600):
-        """Set cache in Redis"""
         cache_key = f"fetch:{hashlib.md5(url.encode()).hexdigest()}"
         redis_client.setex(cache_key, ttl, content)
     
     async def fetch_rss_async(self, feed_urls: Dict[str, str]) -> List[Dict]:
-        """Asynchronously fetch RSS feeds"""
         jobs = []
         
         async with aiohttp.ClientSession() as session:
@@ -701,9 +666,7 @@ class JobFetcherService:
         return jobs
     
     async def _fetch_single_rss(self, session: aiohttp.ClientSession, source: str, url: str) -> List[Dict]:
-        """Fetch single RSS feed"""
         try:
-            # Check cache first
             cached = self.get_cached_response(url)
             if cached:
                 feed = feedparser.parse(cached)
@@ -737,7 +700,6 @@ class JobFetcherService:
             return []
     
     def fetch_api_jobs_batch(self, apis: List[Dict]) -> List[Dict]:
-        """Fetch jobs from multiple APIs with retry logic"""
         jobs = []
         
         for api_config in apis:
@@ -750,7 +712,6 @@ class JobFetcherService:
         return jobs
     
     def _fetch_with_retry(self, api_config: Dict, max_retries: int = 3) -> List[Dict]:
-        """Fetch with exponential backoff retry"""
         import time
         
         for attempt in range(max_retries):
@@ -777,20 +738,17 @@ class JobFetcherService:
         return []
     
     def _parse_api_response(self, data: Dict, parser_config: Dict) -> List[Dict]:
-        """Parse API response based on configuration"""
         jobs = []
         
-        # Navigate to jobs array in response
         jobs_data = data
         for key in parser_config.get('path', '').split('.'):
             if key:
                 jobs_data = jobs_data.get(key, [])
         
-        # Ensure jobs_data is a list
         if not isinstance(jobs_data, list):
             jobs_data = [jobs_data] if jobs_data else []
         
-        for item in jobs_data[:50]:  # Limit to 50 jobs per API
+        for item in jobs_data[:50]:
             job = {
                 'title': self._get_nested_value(item, parser_config.get('title')),
                 'description': self._get_nested_value(item, parser_config.get('description')),
@@ -807,17 +765,14 @@ class JobFetcherService:
         return jobs
     
     def scrape_websites_intelligent(self, configs: List[Dict]) -> List[Dict]:
-        """Intelligent web scraping with anti-detection"""
         jobs = []
         
         for config in configs:
             try:
-                # Add random delay to avoid detection
                 import random
                 import time
                 time.sleep(random.uniform(1, 3))
                 
-                # Rotate user agents
                 self.session.headers['User-Agent'] = self._get_random_user_agent()
                 
                 response = self.session.get(config['url'], timeout=15)
@@ -833,7 +788,6 @@ class JobFetcherService:
         return jobs
     
     def _parse_scraped_content(self, soup: BeautifulSoup, config: Dict) -> List[Dict]:
-        """Parse scraped content based on selectors"""
         jobs = []
         
         job_elements = soup.select(config['job_selector'])[:20]
@@ -850,7 +804,7 @@ class JobFetcherService:
                     'job_metadata': {'source_name': config['name']}
                 }
                 
-                if job['title']:  # Only add if title exists
+                if job['title']:
                     jobs.append(job)
                     
             except Exception as e:
@@ -861,27 +815,20 @@ class JobFetcherService:
     
     @staticmethod
     def _clean_text(text: str) -> str:
-        """Clean and normalize text"""
         import re
         import html
         
         if not text:
             return ''
         
-        # Unescape HTML entities
         text = html.unescape(text)
-        
-        # Remove excessive whitespace
         text = re.sub(r'\s+', ' ', text)
-        
-        # Remove special characters but keep basic punctuation
         text = re.sub(r'[^\w\s\-.,!?;:()```math```{}\'"]', '', text)
         
         return text.strip()
     
     @staticmethod
     def _detect_category(title: str) -> str:
-        """Detect job category from title using keywords"""
         categories = {
             'Government': ['govt', 'government', 'psc', 'upsc', 'ssc', 'railway', 'defense'],
             'IT': ['software', 'developer', 'programmer', 'engineer', 'tech', 'data', 'cloud'],
@@ -901,25 +848,19 @@ class JobFetcherService:
     
     @staticmethod
     def _extract_tags(text: str) -> List[str]:
-        """Extract relevant tags from text"""
         import re
         from collections import Counter
         
-        # Common words to exclude
         stop_words = {'the', 'is', 'at', 'which', 'on', 'and', 'a', 'an', 'as', 'are', 'was', 'were', 'to', 'for', 'of', 'in', 'with'}
         
-        # Extract words
         words = re.findall(r'\b[a-z]+\b', text.lower())
         
-        # Filter and count
         word_counts = Counter(word for word in words if len(word) > 3 and word not in stop_words)
         
-        # Return top 10 most common as tags
         return [word for word, _ in word_counts.most_common(10)]
     
     @staticmethod
     def _parse_date(date_tuple) -> Optional[datetime]:
-        """Parse date from various formats"""
         if date_tuple:
             try:
                 import time
@@ -930,7 +871,6 @@ class JobFetcherService:
     
     @staticmethod
     def _get_nested_value(data: Dict, path: str) -> Any:
-        """Get nested value from dictionary using dot notation"""
         if not path:
             return None
         
@@ -947,7 +887,6 @@ class JobFetcherService:
     
     @staticmethod
     def _get_random_user_agent() -> str:
-        """Get random user agent for rotation"""
         user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
@@ -958,7 +897,6 @@ class JobFetcherService:
     
     @staticmethod
     def _safe_extract(element, selector: str) -> str:
-        """Safely extract text from element"""
         try:
             if selector:
                 found = element.select_one(selector)
@@ -969,7 +907,6 @@ class JobFetcherService:
     
     @staticmethod
     def _safe_extract_url(element, selector: str, base_url: str) -> str:
-        """Safely extract URL from element"""
         try:
             if selector:
                 found = element.select_one(selector)
@@ -983,13 +920,9 @@ class JobFetcherService:
         except:
             return ''
 
-# Analytics Service
 class AnalyticsService:
-    """Advanced analytics service with real-time processing"""
-    
     @staticmethod
     def track_event(request, event_type: str, **kwargs):
-        """Track analytics event with enriched data"""
         try:
             from flask_login import current_user
             
@@ -1016,7 +949,6 @@ class AnalyticsService:
     
     @staticmethod
     def get_dashboard_metrics(date_from: datetime, date_to: datetime) -> Dict:
-        """Get comprehensive dashboard metrics"""
         try:
             metrics = {
                 'overview': {
@@ -1039,7 +971,6 @@ class AnalyticsService:
                 }
             }
             
-            # Get top pages
             top_pages = db.session.query(
                 Analytics.page_url,
                 func.count(Analytics.id).label('views')
@@ -1061,18 +992,13 @@ class AnalyticsService:
                 'traffic': {'sources': [], 'pages': []}
             }
 
-# Database maintenance and optimization
 class DatabaseMaintenance:
-    """Database maintenance utilities"""
-    
     @staticmethod
     def backup_database() -> Optional[str]:
-        """Create database backup"""
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             backup_file = f"backup_{timestamp}.sql"
             logger.info(f"Database backup initiated: {backup_file}")
-            # Actual backup implementation would go here
             return backup_file
         except Exception as e:
             logger.error(f"Database backup failed: {str(e)}")
@@ -1080,21 +1006,17 @@ class DatabaseMaintenance:
     
     @staticmethod
     def clean_old_data(days: int = 90):
-        """Clean old data from tables"""
         try:
             cutoff_date = datetime.utcnow() - timedelta(days=days)
             
-            # Clean old analytics
             deleted = Analytics.query.filter(
                 Analytics.created_at < cutoff_date
             ).delete()
             
-            # Clean expired sessions
             UserSession.query.filter(
                 UserSession.expires_at < datetime.utcnow()
             ).delete()
             
-            # Archive old jobs
             Job.query.filter(
                 Job.expires_at < cutoff_date,
                 Job.status != JobStatus.ARCHIVED
@@ -1107,12 +1029,9 @@ class DatabaseMaintenance:
             db.session.rollback()
             logger.error(f"Data cleanup failed: {str(e)}")
 
-# Event listeners for audit logging (optional - can be enabled when needed)
 def enable_audit_logging():
-    """Enable audit logging for all models"""
     @event.listens_for(db.session, 'before_commit')
     def receive_before_commit(session):
-        """Log all database changes before commit"""
         for obj in session.new:
             if not isinstance(obj, AuditLog):
                 _create_audit_log(obj, 'CREATE')
@@ -1126,7 +1045,6 @@ def enable_audit_logging():
                 _create_audit_log(obj, 'DELETE')
 
 def _create_audit_log(obj, action):
-    """Create audit log entry"""
     try:
         from flask import has_request_context, request
         from flask_login import current_user
