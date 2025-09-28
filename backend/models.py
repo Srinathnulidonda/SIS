@@ -13,7 +13,7 @@ from sqlalchemy import (
     Index, UniqueConstraint, CheckConstraint, event,
     text, func, select, and_, or_, desc
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB, INET, TSVECTOR
+from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import validates, deferred, column_property
 from sqlalchemy.sql import expression
@@ -30,7 +30,6 @@ import asyncio
 import aiohttp
 from cryptography.fernet import Fernet
 import jwt
-from email_validator import validate_email, EmailNotValidError
 
 # Initialize extensions
 db = SQLAlchemy()
@@ -38,7 +37,7 @@ db = SQLAlchemy()
 # Initialize Redis with error handling
 try:
     redis_client = redis.Redis.from_url(
-        os.getenv('REDIS_URL', 'redis://localhost:6379'),
+        os.getenv('REDIS_URL', 'redis://red-d3cikjqdbo4c73e72slg:mirq8x6uekGSDV0O3eb1eVjUG3GuYkVe@red-d3cikjqdbo4c73e72slg:6379'),
         decode_responses=True
     )
     redis_client.ping()
@@ -230,7 +229,7 @@ class User(UserMixin, BaseModel):
     phone = db.Column(db.String(20))
     avatar_url = db.Column(db.String(500))
     bio = db.Column(db.Text)
-    user_metadata = db.Column(JSONB, default=dict)  # Renamed from metadata
+    user_metadata = db.Column(JSONB, default=dict)  # Renamed from metadata to avoid SQLAlchemy conflict
     
     # Session management
     last_login_at = db.Column(db.DateTime(timezone=True))
@@ -257,14 +256,18 @@ class User(UserMixin, BaseModel):
         Index('idx_user_role_active', 'role', 'is_active'),
     )
     
+    def validate_email_field(self, email):
+        """Validate email format - simplified without external dependency"""
+        import re
+        email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_regex, email):
+            raise ValueError(f"Invalid email address: {email}")
+        return email.lower()
+    
     @validates('email')
     def validate_email(self, key, email):
-        """Validate email format"""
-        try:
-            valid = validate_email(email)
-            return valid.email
-        except EmailNotValidError:
-            raise ValueError(f"Invalid email address: {email}")
+        """SQLAlchemy validator for email"""
+        return self.validate_email_field(email)
     
     @validates('username')
     def validate_username(self, key, username):
@@ -454,15 +457,12 @@ class Job(BaseModel):
     meta_title = db.Column(db.String(160))
     meta_description = db.Column(db.String(320))
     tags = db.Column(JSONB, default=list)
-    job_metadata = db.Column(JSONB, default=dict)  # Additional metadata
+    job_metadata = db.Column(JSONB, default=dict)  # Renamed from metadata to avoid conflicts
     
     # Analytics
     view_count = db.Column(db.Integer, default=0)
     apply_count = db.Column(db.Integer, default=0)
     share_count = db.Column(db.Integer, default=0)
-    
-    # Full-text search - will be created as index
-    # search_vector = db.Column(TSVECTOR)
     
     # Quality score
     quality_score = db.Column(db.Float, default=0.0)
@@ -470,7 +470,6 @@ class Job(BaseModel):
     __table_args__ = (
         Index('idx_job_status_expires', 'status', 'expires_at'),
         Index('idx_job_category_status', 'category', 'status'),
-        # Index('idx_job_search', 'search_vector', postgresql_using='gin'),
         CheckConstraint('salary_min <= salary_max', name='salary_range_check'),
     )
     
@@ -516,9 +515,7 @@ class Job(BaseModel):
         return self.quality_score
     
     def update_search_vector(self):
-        """Update full-text search vector"""
-        # This would be implemented with PostgreSQL specific features
-        # For now, we'll use a simple approach
+        """Update full-text search vector - placeholder for PostgreSQL implementation"""
         pass
     
     @hybrid_property
@@ -711,7 +708,7 @@ class JobFetcherService:
             if cached:
                 feed = feedparser.parse(cached)
             else:
-                async with session.get(url, timeout=10) as response:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     content = await response.text()
                     self.set_cache(url, content)
                     feed = feedparser.parse(content)
@@ -789,6 +786,10 @@ class JobFetcherService:
             if key:
                 jobs_data = jobs_data.get(key, [])
         
+        # Ensure jobs_data is a list
+        if not isinstance(jobs_data, list):
+            jobs_data = [jobs_data] if jobs_data else []
+        
         for item in jobs_data[:50]:  # Limit to 50 jobs per API
             job = {
                 'title': self._get_nested_value(item, parser_config.get('title')),
@@ -802,6 +803,59 @@ class JobFetcherService:
             }
             
             jobs.append(job)
+        
+        return jobs
+    
+    def scrape_websites_intelligent(self, configs: List[Dict]) -> List[Dict]:
+        """Intelligent web scraping with anti-detection"""
+        jobs = []
+        
+        for config in configs:
+            try:
+                # Add random delay to avoid detection
+                import random
+                import time
+                time.sleep(random.uniform(1, 3))
+                
+                # Rotate user agents
+                self.session.headers['User-Agent'] = self._get_random_user_agent()
+                
+                response = self.session.get(config['url'], timeout=15)
+                response.raise_for_status()
+                
+                soup = BeautifulSoup(response.content, 'lxml')
+                jobs.extend(self._parse_scraped_content(soup, config))
+                
+            except Exception as e:
+                logger.error(f"Scraping failed for {config['name']}: {str(e)}")
+                continue
+        
+        return jobs
+    
+    def _parse_scraped_content(self, soup: BeautifulSoup, config: Dict) -> List[Dict]:
+        """Parse scraped content based on selectors"""
+        jobs = []
+        
+        job_elements = soup.select(config['job_selector'])[:20]
+        
+        for element in job_elements:
+            try:
+                job = {
+                    'title': self._safe_extract(element, config.get('title_selector')),
+                    'description': self._safe_extract(element, config.get('description_selector')),
+                    'source_url': self._safe_extract_url(element, config.get('url_selector'), config['base_url']),
+                    'source': JobSource.SCRAPER,
+                    'status': JobStatus.PENDING,
+                    'expires_at': datetime.utcnow() + timedelta(days=30),
+                    'job_metadata': {'source_name': config['name']}
+                }
+                
+                if job['title']:  # Only add if title exists
+                    jobs.append(job)
+                    
+            except Exception as e:
+                logger.warning(f"Failed to parse job element: {str(e)}")
+                continue
         
         return jobs
     
@@ -821,7 +875,7 @@ class JobFetcherService:
         text = re.sub(r'\s+', ' ', text)
         
         # Remove special characters but keep basic punctuation
-        text = re.sub(r'[^\w\s\-.,!?;:()\[\]{}\'"]', '', text)
+        text = re.sub(r'[^\w\s\-.,!?;:()```math```{}\'"]', '', text)
         
         return text.strip()
     
@@ -890,6 +944,44 @@ class JobFetcherService:
                 return None
         
         return value
+    
+    @staticmethod
+    def _get_random_user_agent() -> str:
+        """Get random user agent for rotation"""
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
+        ]
+        import random
+        return random.choice(user_agents)
+    
+    @staticmethod
+    def _safe_extract(element, selector: str) -> str:
+        """Safely extract text from element"""
+        try:
+            if selector:
+                found = element.select_one(selector)
+                return found.get_text(strip=True) if found else ''
+            return element.get_text(strip=True)
+        except:
+            return ''
+    
+    @staticmethod
+    def _safe_extract_url(element, selector: str, base_url: str) -> str:
+        """Safely extract URL from element"""
+        try:
+            if selector:
+                found = element.select_one(selector)
+                if found:
+                    url = found.get('href', '')
+                    if url and not url.startswith('http'):
+                        from urllib.parse import urljoin
+                        url = urljoin(base_url, url)
+                    return url
+            return ''
+        except:
+            return ''
 
 # Analytics Service
 class AnalyticsService:
@@ -940,14 +1032,34 @@ class AnalyticsService:
                         Analytics.event_type == 'pageview',
                         Analytics.created_at.between(date_from, date_to)
                     ).scalar() or 0
+                },
+                'traffic': {
+                    'sources': [],
+                    'pages': []
                 }
             }
+            
+            # Get top pages
+            top_pages = db.session.query(
+                Analytics.page_url,
+                func.count(Analytics.id).label('views')
+            ).filter(
+                Analytics.event_type == 'pageview',
+                Analytics.created_at.between(date_from, date_to)
+            ).group_by(Analytics.page_url).order_by(desc('views')).limit(10).all()
+            
+            metrics['traffic']['pages'] = [
+                {'url': page[0], 'views': page[1]} for page in top_pages
+            ]
             
             return metrics
             
         except Exception as e:
             logger.error(f"Failed to get dashboard metrics: {str(e)}")
-            return {'overview': {'total_users': 0, 'total_sessions': 0, 'total_pageviews': 0}}
+            return {
+                'overview': {'total_users': 0, 'total_sessions': 0, 'total_pageviews': 0},
+                'traffic': {'sources': [], 'pages': []}
+            }
 
 # Database maintenance and optimization
 class DatabaseMaintenance:
@@ -959,8 +1071,79 @@ class DatabaseMaintenance:
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             backup_file = f"backup_{timestamp}.sql"
-            logger.info(f"Database backup created: {backup_file}")
+            logger.info(f"Database backup initiated: {backup_file}")
+            # Actual backup implementation would go here
             return backup_file
         except Exception as e:
             logger.error(f"Database backup failed: {str(e)}")
-            return 
+            return None
+    
+    @staticmethod
+    def clean_old_data(days: int = 90):
+        """Clean old data from tables"""
+        try:
+            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            
+            # Clean old analytics
+            deleted = Analytics.query.filter(
+                Analytics.created_at < cutoff_date
+            ).delete()
+            
+            # Clean expired sessions
+            UserSession.query.filter(
+                UserSession.expires_at < datetime.utcnow()
+            ).delete()
+            
+            # Archive old jobs
+            Job.query.filter(
+                Job.expires_at < cutoff_date,
+                Job.status != JobStatus.ARCHIVED
+            ).update({Job.status: JobStatus.ARCHIVED})
+            
+            db.session.commit()
+            logger.info(f"Cleaned {deleted} old records")
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Data cleanup failed: {str(e)}")
+
+# Event listeners for audit logging (optional - can be enabled when needed)
+def enable_audit_logging():
+    """Enable audit logging for all models"""
+    @event.listens_for(db.session, 'before_commit')
+    def receive_before_commit(session):
+        """Log all database changes before commit"""
+        for obj in session.new:
+            if not isinstance(obj, AuditLog):
+                _create_audit_log(obj, 'CREATE')
+        
+        for obj in session.dirty:
+            if not isinstance(obj, AuditLog) and session.is_modified(obj):
+                _create_audit_log(obj, 'UPDATE')
+        
+        for obj in session.deleted:
+            if not isinstance(obj, AuditLog):
+                _create_audit_log(obj, 'DELETE')
+
+def _create_audit_log(obj, action):
+    """Create audit log entry"""
+    try:
+        from flask import has_request_context, request
+        from flask_login import current_user
+        
+        audit = AuditLog(
+            table_name=obj.__tablename__,
+            record_id=obj.id if hasattr(obj, 'id') else None,
+            action=action,
+            new_values=obj.to_dict() if hasattr(obj, 'to_dict') else None
+        )
+        
+        if has_request_context():
+            audit.user_id = current_user.id if current_user.is_authenticated else None
+            audit.ip_address = request.remote_addr
+            audit.user_agent = request.user_agent.string[:500]
+        
+        db.session.add(audit)
+        
+    except Exception as e:
+        logger.warning(f"Failed to create audit log: {str(e)}")

@@ -81,7 +81,7 @@ class Config:
     # Database
     SQLALCHEMY_DATABASE_URI = os.getenv(
         'DATABASE_URL',
-        'postgresql://user:pass@localhost/sridhar_services'
+        'postgresql://database_v3r2_user:QaF6Nczo8NaoB6XZo09SpCJ3EVvnNPNx@dpg-d3cik4j7mgec73aho5qg-a/database_v3r2'
     ).replace('postgres://', 'postgresql://')
     SQLALCHEMY_ENGINE_OPTIONS = {
         'pool_size': 20,
@@ -97,7 +97,7 @@ class Config:
     SQLALCHEMY_RECORD_QUERIES = False
     
     # Redis & Caching
-    REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    REDIS_URL = os.getenv('REDIS_URL', 'redis://red-d3cikjqdbo4c73e72slg:mirq8x6uekGSDV0O3eb1eVjUG3GuYkVe@red-d3cikjqdbo4c73e72slg:6379')
     CACHE_TYPE = 'redis'
     CACHE_REDIS_URL = REDIS_URL
     CACHE_DEFAULT_TIMEOUT = 300
