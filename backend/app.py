@@ -168,7 +168,6 @@ celery = Celery(app.name)
 celery.conf.update(app.config)
 
 def setup_redis_scheduler():
-    """Setup APScheduler with Redis jobstore"""
     try:
         redis_url = app.config['REDIS_URL']
         parsed_url = urlparse(redis_url)
@@ -194,7 +193,6 @@ def setup_redis_scheduler():
 scheduler = setup_redis_scheduler()
 
 def setup_logging():
-    """Setup logging with proper error handling"""
     if not app.debug:
         log_dir = os.path.join(os.getcwd(), 'logs')
         
@@ -224,8 +222,28 @@ setup_logging()
 if app.config['STRIPE_SECRET_KEY']:
     stripe.api_key = app.config['STRIPE_SECRET_KEY']
 
+database_initialized = False
+
+def initialize_database():
+    global database_initialized
+    if not database_initialized:
+        try:
+            with app.app_context():
+                db.create_all()
+                
+                if not User.query.filter_by(username='manager').first():
+                    User.create_default_accounts()
+                    app.logger.info("Database initialized with default accounts")
+                
+                database_initialized = True
+                
+        except Exception as e:
+            app.logger.error(f"Database initialization failed: {str(e)}")
+
 @app.before_request
 def before_request():
+    initialize_database()
+    
     g.start_time = datetime.utcnow()
     g.request_id = secrets.token_hex(16)
     
@@ -245,12 +263,15 @@ def before_request():
             flash('Your session has expired. Please login again.', 'warning')
             return redirect(url_for('auth.login'))
     
-    if not request.path.startswith('/static'):
-        AnalyticsService.track_event(
-            request,
-            'pageview',
-            page_title=request.endpoint
-        )
+    if not request.path.startswith('/static') and not request.path.startswith('/api/health'):
+        try:
+            AnalyticsService.track_event(
+                request,
+                'pageview',
+                page_title=request.endpoint
+            )
+        except Exception as e:
+            app.logger.debug(f"Analytics tracking failed: {str(e)}")
 
 @app.after_request
 def after_request(response):
@@ -408,6 +429,77 @@ def validate_json(*required_fields):
             return f(*args, **kwargs)
         return decorated_function
     return decorator
+
+@app.route('/')
+def index():
+    return jsonify({
+        'service': 'Sridhar Internet Services',
+        'version': '2.0.0',
+        'status': 'running',
+        'endpoints': {
+            'health': '/api/health',
+            'jobs': '/api/jobs',
+            'categories': '/api/categories',
+            'auth': {
+                'register': '/api/auth/register',
+                'login': '/api/auth/login',
+                'logout': '/api/auth/logout'
+            },
+            'admin': '/api/admin/dashboard',
+            'manager': '/api/manager/analytics'
+        }
+    })
+
+@app.route('/api/init-system', methods=['POST'])
+def init_system_endpoint():
+    try:
+        with app.app_context():
+            db.create_all()
+            
+            if User.create_default_accounts():
+                return jsonify({
+                    'status': 'success',
+                    'message': 'System initialized successfully',
+                    'accounts': {
+                        'manager': {'username': 'manager', 'password': 'Manager@123'},
+                        'admin': {'username': 'admin', 'password': 'Admin@123'}
+                    },
+                    'warning': 'Please change these passwords after first login!'
+                }), 200
+            else:
+                return jsonify({
+                    'status': 'partial',
+                    'message': 'Database tables created but failed to create default accounts'
+                }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'System initialization failed: {str(e)}'
+        }), 500
+
+@app.route('/api/system-status', methods=['GET'])
+def system_status():
+    try:
+        user_count = User.query.count()
+        
+        manager_exists = User.query.filter_by(username='manager').first() is not None
+        admin_exists = User.query.filter_by(username='admin').first() is not None
+        
+        return jsonify({
+            'database_initialized': True,
+            'user_count': user_count,
+            'default_accounts': {
+                'manager_exists': manager_exists,
+                'admin_exists': admin_exists
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'database_initialized': False,
+            'error': str(e)
+        }), 200
 
 @app.route('/api/auth/register', methods=['POST'])
 @limiter.limit("5 per hour")
@@ -591,7 +683,11 @@ def get_jobs():
     
     if search:
         query = query.filter(
-            db.func.to_tsvector('english', Job.title + ' ' + Job.description).match(search)
+            db.or_(
+                Job.title.ilike(f'%{search}%'),
+                Job.description.ilike(f'%{search}%'),
+                Job.company.ilike(f'%{search}%')
+            )
         )
     
     if sort_by == 'salary':
@@ -639,12 +735,15 @@ def get_job(job_id):
     job.view_count += 1
     db.session.commit()
     
-    AnalyticsService.track_event(
-        request,
-        'job_view',
-        category='jobs',
-        label=str(job_id)
-    )
+    try:
+        AnalyticsService.track_event(
+            request,
+            'job_view',
+            category='jobs',
+            label=str(job_id)
+        )
+    except Exception as e:
+        app.logger.debug(f"Analytics tracking failed: {str(e)}")
     
     return jsonify(job.to_dict(exclude=['deleted_at'])), 200
 
@@ -659,13 +758,16 @@ def apply_for_job(job_id):
     job.apply_count += 1
     db.session.commit()
     
-    AnalyticsService.track_event(
-        request,
-        'job_apply',
-        category='jobs',
-        label=str(job_id),
-        value=1
-    )
+    try:
+        AnalyticsService.track_event(
+            request,
+            'job_apply',
+            category='jobs',
+            label=str(job_id),
+            value=1
+        )
+    except Exception as e:
+        app.logger.debug(f"Analytics tracking failed: {str(e)}")
     
     if job.source_url:
         return jsonify({
@@ -1224,12 +1326,15 @@ def track_ad_click():
             ad.calculate_metrics()
             db.session.commit()
         
-        AnalyticsService.track_event(
-            request,
-            'ad_click',
-            category='ads',
-            label=f"{ad_type}_{campaign_id}"
-        )
+        try:
+            AnalyticsService.track_event(
+                request,
+                'ad_click',
+                category='ads',
+                label=f"{ad_type}_{campaign_id}"
+            )
+        except:
+            pass
         
         return jsonify({'status': 'tracked'}), 200
         
@@ -1262,6 +1367,15 @@ def stripe_webhook():
         return jsonify({'error': 'Invalid payload'}), 400
     except stripe.error.SignatureVerificationError:
         return jsonify({'error': 'Invalid signature'}), 400
+
+def schedule_fetch_all_jobs():
+    fetch_jobs_task.delay('all')
+
+def schedule_daily_cleanup():
+    cleanup_task.delay()
+
+def schedule_daily_backup():
+    backup_task.delay()
 
 @celery.task(bind=True, max_retries=3)
 def fetch_jobs_task(self, source='all'):
@@ -1362,7 +1476,7 @@ def cleanup_task():
 
 try:
     scheduler.add_job(
-        func=lambda: fetch_jobs_task.delay('all'),
+        func=schedule_fetch_all_jobs,
         trigger='interval',
         hours=6,
         id='fetch_all_jobs',
@@ -1370,7 +1484,7 @@ try:
     )
 
     scheduler.add_job(
-        func=lambda: cleanup_task.delay(),
+        func=schedule_daily_cleanup,
         trigger='cron',
         hour=3,
         minute=0,
@@ -1379,7 +1493,7 @@ try:
     )
 
     scheduler.add_job(
-        func=lambda: backup_task.delay(),
+        func=schedule_daily_backup,
         trigger='cron',
         hour=2,
         minute=0,
