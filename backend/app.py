@@ -1563,59 +1563,67 @@ def add_missing_columns():
             
             missing_columns = []
             
-            if 'experience_min' not in columns:
-                db.session.execute(text('ALTER TABLE jobs ADD COLUMN experience_min INTEGER'))
-                missing_columns.append('experience_min')
-                
-            if 'experience_max' not in columns:
-                db.session.execute(text('ALTER TABLE jobs ADD COLUMN experience_max INTEGER'))
-                missing_columns.append('experience_max')
-                
-            if 'education' not in columns:
-                db.session.execute(text('ALTER TABLE jobs ADD COLUMN education VARCHAR(200)'))
-                missing_columns.append('education')
-                
-            if 'skills' not in columns:
-                db.session.execute(text('ALTER TABLE jobs ADD COLUMN skills JSON'))
-                missing_columns.append('skills')
-                
-            if 'requirements' not in columns:
-                db.session.execute(text('ALTER TABLE jobs ADD COLUMN requirements TEXT'))
-                missing_columns.append('requirements')
-                
-            if 'responsibilities' not in columns:
-                db.session.execute(text('ALTER TABLE jobs ADD COLUMN responsibilities TEXT'))
-                missing_columns.append('responsibilities')
-                
-            if 'benefits' not in columns:
-                db.session.execute(text('ALTER TABLE jobs ADD COLUMN benefits TEXT'))
-                missing_columns.append('benefits')
-                
-            if 'apply_url' not in columns:
-                db.session.execute(text('ALTER TABLE jobs ADD COLUMN apply_url VARCHAR(500)'))
-                missing_columns.append('apply_url')
-                
-            if 'apply_email' not in columns:
-                db.session.execute(text('ALTER TABLE jobs ADD COLUMN apply_email VARCHAR(200)'))
-                missing_columns.append('apply_email')
-                
-            if 'company_website' not in columns:
-                db.session.execute(text('ALTER TABLE jobs ADD COLUMN company_website VARCHAR(300)'))
-                missing_columns.append('company_website')
-                
-            if 'application_deadline' not in columns:
-                db.session.execute(text('ALTER TABLE jobs ADD COLUMN application_deadline TIMESTAMP'))
-                missing_columns.append('application_deadline')
+            # Add all missing columns with proper data types
+            column_definitions = {
+                'experience_min': 'ALTER TABLE jobs ADD COLUMN experience_min INTEGER',
+                'experience_max': 'ALTER TABLE jobs ADD COLUMN experience_max INTEGER',
+                'education': 'ALTER TABLE jobs ADD COLUMN education VARCHAR(200)',
+                'skills': 'ALTER TABLE jobs ADD COLUMN skills JSON',
+                'requirements': 'ALTER TABLE jobs ADD COLUMN requirements TEXT',
+                'responsibilities': 'ALTER TABLE jobs ADD COLUMN responsibilities TEXT',
+                'benefits': 'ALTER TABLE jobs ADD COLUMN benefits TEXT',
+                'apply_url': 'ALTER TABLE jobs ADD COLUMN apply_url VARCHAR(500)',
+                'apply_email': 'ALTER TABLE jobs ADD COLUMN apply_email VARCHAR(200)',
+                'company_logo': 'ALTER TABLE jobs ADD COLUMN company_logo VARCHAR(500)',
+                'company_website': 'ALTER TABLE jobs ADD COLUMN company_website VARCHAR(300)',
+                'external_id': 'ALTER TABLE jobs ADD COLUMN external_id VARCHAR(200)',
+                'source': 'ALTER TABLE jobs ADD COLUMN source VARCHAR(50) DEFAULT \'manual\'',
+                'is_approved': 'ALTER TABLE jobs ADD COLUMN is_approved BOOLEAN DEFAULT FALSE',
+                'is_active': 'ALTER TABLE jobs ADD COLUMN is_active BOOLEAN DEFAULT TRUE',
+                'is_remote': 'ALTER TABLE jobs ADD COLUMN is_remote BOOLEAN DEFAULT FALSE',
+                'is_featured': 'ALTER TABLE jobs ADD COLUMN is_featured BOOLEAN DEFAULT FALSE',
+                'views_count': 'ALTER TABLE jobs ADD COLUMN views_count INTEGER DEFAULT 0',
+                'application_deadline': 'ALTER TABLE jobs ADD COLUMN application_deadline TIMESTAMP',
+                'expires_at': 'ALTER TABLE jobs ADD COLUMN expires_at TIMESTAMP',
+                'created_at': 'ALTER TABLE jobs ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP',
+                'updated_at': 'ALTER TABLE jobs ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
+            }
+            
+            for column_name, alter_statement in column_definitions.items():
+                if column_name not in columns:
+                    try:
+                        db.session.execute(text(alter_statement))
+                        missing_columns.append(column_name)
+                        logger.info(f"Added column: {column_name}")
+                    except Exception as col_error:
+                        logger.warning(f"Could not add column {column_name}: {col_error}")
                 
             if missing_columns:
                 db.session.commit()
-                logger.info(f"Added missing columns: {missing_columns}")
+                logger.info(f"Successfully added missing columns: {missing_columns}")
             else:
                 logger.info("All required columns exist")
+                
+            # Add indexes for better performance
+            index_statements = [
+                'CREATE INDEX IF NOT EXISTS idx_jobs_slug ON jobs(slug)',
+                'CREATE INDEX IF NOT EXISTS idx_jobs_is_approved ON jobs(is_approved)',
+                'CREATE INDEX IF NOT EXISTS idx_jobs_is_active ON jobs(is_active)',
+                'CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at)'
+            ]
+            
+            for index_stmt in index_statements:
+                try:
+                    db.session.execute(text(index_stmt))
+                except Exception as idx_error:
+                    logger.warning(f"Could not create index: {idx_error}")
+                    
+            db.session.commit()
                 
         except Exception as e:
             logger.error(f"Error adding columns: {e}")
             db.session.rollback()
+
 
 def init_db():
     with app.app_context():
