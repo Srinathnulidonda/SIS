@@ -1,785 +1,230 @@
 import os
-import logging
 import secrets
-import asyncio
-import aiohttp
+import requests
 from datetime import datetime, timedelta
 from functools import wraps
-from typing import Optional, Dict, Any, List, Tuple
-import hashlib
-import json
-import requests
-from urllib.parse import urlparse, urljoin
-import re
-import time
-from dataclasses import dataclass
-from enum import Enum
-import xml.etree.ElementTree as ET
+from typing import Optional
 
-from flask import Flask, request, jsonify, session, g, abort, current_app, send_file
+from flask import Flask, request, jsonify, session
 from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
+from flask_bcrypt import Bcrypt
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_cors import CORS
-from flask_wtf.csrf import CSRFProtect
-from flask_caching import Cache
-import jwt
-import bcrypt
-from werkzeug.utils import secure_filename
-from werkzeug.exceptions import BadRequest, Unauthorized, Forbidden, NotFound
+from flask_migrate import Migrate
+from sqlalchemy import func, Index, text
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
-from celery import Celery
-from celery.schedules import crontab
-import redis
-from sqlalchemy.dialects.postgresql import UUID, JSONB, TSVECTOR
-from sqlalchemy import and_, or_, desc, asc, func, text, Index
-from sqlalchemy.ext.hybrid import hybrid_property
-from email_validator import validate_email, EmailNotValidError
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+import jwt
 import uuid
-from bs4 import BeautifulSoup
-import feedparser
-import requests_cache
-from prometheus_client import Counter, Histogram, Gauge, generate_latest
-import structlog
-from marshmallow import Schema, fields, validate, ValidationError
-from flask_jwt_extended import JWTManager, create_access_token, create_refresh_token, jwt_required, get_jwt_identity, get_jwt
-import bleach
-from dateutil import parser as date_parser
-import pytz
-from flask_talisman import Talisman
-from flask_compress import Compress
+from werkzeug.utils import secure_filename
+from enum import Enum
 
 
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer()
-    ],
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
-    cache_logger_on_first_use=True,
+app = Flask(__name__)
+
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', secrets.token_hex(32))
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
+    'DATABASE_URL',
+    'postgresql://postgres:postgres@localhost:5432/sridhar_services'
+)
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_size': 10,
+    'pool_recycle': 3600,
+    'pool_pre_ping': True,
+}
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.config['SESSION_COOKIE_SECURE'] = os.getenv('FLASK_ENV') == 'production'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', secrets.token_hex(32))
+app.config['JWT_EXPIRATION_HOURS'] = int(os.getenv('JWT_EXPIRATION_HOURS', '24'))
+
+cloudinary.config(
+    cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
+    api_key=os.getenv('CLOUDINARY_API_KEY'),
+    api_secret=os.getenv('CLOUDINARY_API_SECRET'),
+    secure=True
 )
 
-logger = structlog.get_logger()
-
-db = SQLAlchemy()
-migrate = Migrate()
-csrf = CSRFProtect()
-limiter = Limiter(key_func=get_remote_address)
-cache = Cache()
-jwt_manager = JWTManager()
-compress = Compress()
-
-REQUEST_COUNT = Counter('http_requests_total', 'Total HTTP requests', ['method', 'endpoint', 'status'])
-REQUEST_DURATION = Histogram('http_request_duration_seconds', 'HTTP request duration')
-ACTIVE_JOBS = Gauge('active_jobs_total', 'Total active jobs')
-JOB_SYNC_ERRORS = Counter('job_sync_errors_total', 'Job sync errors', ['source'])
-
-blacklisted_tokens = set()
-
-INDIAN_STATES = {
-    'telangana': ['Hyderabad', 'Warangal', 'Nizamabad', 'Karimnagar', 'Khammam', 'Mahbubnagar', 'Medak', 'Nalgonda', 'Rangareddy', 'Adilabad'],
-    'andhra_pradesh': ['Visakhapatnam', 'Vijayawada', 'Guntur', 'Nellore', 'Kurnool', 'Rajahmundry', 'Tirupati', 'Kadapa', 'Anantapur', 'Chittoor', 'Eluru', 'Ongole', 'Srikakulam', 'Vizianagaram']
-}
-
-INDIAN_JOB_CATEGORIES = [
-    'Government Jobs', 'Banking & Finance', 'Railway Jobs', 'Police & Defence', 'Teaching & Education',
-    'Healthcare & Medical', 'IT & Software', 'Engineering', 'Civil Services', 'PSU Jobs',
-    'State Government', 'Central Government', 'Court Jobs', 'University Jobs', 'Research & Development',
-    'Agriculture & Rural Development', 'Telecommunications', 'Power & Energy', 'Transport',
-    'Administrative Services', 'Technical Services', 'Legal Services', 'Accounts & Audit'
-]
-
-EDUCATION_QUALIFICATIONS = [
-    '10th Pass', '12th Pass', 'ITI', 'Diploma', 'Graduate', 'Post Graduate', 'B.Tech', 'B.E',
-    'M.Tech', 'M.E', 'MBA', 'MCA', 'BCA', 'B.Sc', 'M.Sc', 'B.Com', 'M.Com', 'B.A', 'M.A',
-    'LLB', 'LLM', 'MBBS', 'MD', 'B.Ed', 'M.Ed', 'Ph.D', 'CA', 'CS', 'CMA', 'Any Degree'
-]
-
-@dataclass
-class JobAPIConfig:
-    name: str
-    base_url: str
-    api_key_required: bool = False
-    rate_limit_per_hour: int = 100
-    supports_search: bool = True
-    data_format: str = 'json'
-    auth_header: str = 'Authorization'
-    location_filter: bool = True
-    indian_specific: bool = True
+db = SQLAlchemy(app)
+bcrypt = Bcrypt(app)
+migrate = Migrate(app, db)
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri=os.getenv('REDIS_URL', 'redis://localhost:6379')
+)
+CORS(app, supports_credentials=True, origins=os.getenv('ALLOWED_ORIGINS', '*').split(','))
 
 
-class IndianJobDataExtractor:
-    @staticmethod
-    def extract_sarkari_result(data: Dict) -> Dict:
-        return {
-            'title': data.get('post_name', data.get('title', '')),
-            'company': data.get('department', data.get('organization', 'Government of India')),
-            'location': IndianJobDataExtractor._normalize_indian_location(data.get('location', data.get('state', ''))),
-            'description': BeautifulSoup(data.get('description', data.get('details', '')), 'html.parser').get_text(),
-            'job_type': 'government',
-            'application_url': data.get('apply_link', data.get('official_website', '')),
-            'external_id': data.get('notification_id', data.get('id', '')),
-            'application_deadline': data.get('last_date', data.get('application_end_date', '')),
-            'category': IndianJobDataExtractor._categorize_indian_job(data.get('category', data.get('department', ''))),
-            'salary_range': data.get('salary', data.get('pay_scale', '')),
-            'education_required': data.get('qualification', data.get('eligibility', '')),
-            'experience_level': data.get('experience', ''),
-            'age_limit': data.get('age_limit', ''),
-            'exam_date': data.get('exam_date', ''),
-            'notification_pdf': data.get('notification_pdf', ''),
-            'language': 'hindi,english,telugu' if 'telangana' in data.get('location', '').lower() or 'andhra' in data.get('location', '').lower() else 'hindi,english'
-        }
-    
-    @staticmethod
-    def extract_freshersworld(data: Dict) -> Dict:
-        location = IndianJobDataExtractor._normalize_indian_location(data.get('job_location', data.get('location', '')))
-        return {
-            'title': data.get('job_title', data.get('title', '')),
-            'company': data.get('company_name', ''),
-            'location': location,
-            'description': BeautifulSoup(data.get('job_description', ''), 'html.parser').get_text(),
-            'job_type': 'private',
-            'application_url': data.get('apply_url', ''),
-            'external_id': str(data.get('job_id', '')),
-            'salary_range': IndianJobDataExtractor._format_indian_salary(data.get('salary', '')),
-            'experience_level': data.get('experience', ''),
-            'education_required': data.get('qualification', ''),
-            'category': IndianJobDataExtractor._categorize_indian_job(data.get('functional_area', data.get('industry', ''))),
-            'skills_required': data.get('key_skills', ''),
-            'employment_type': data.get('employment_type', 'Full Time')
-        }
-    
-    @staticmethod
-    def extract_naukri(data: Dict) -> Dict:
-        location = IndianJobDataExtractor._normalize_indian_location(data.get('placeholders', [{}])[0].get('label', ''))
-        return {
-            'title': data.get('title', ''),
-            'company': data.get('companyName', ''),
-            'location': location,
-            'description': BeautifulSoup(data.get('jobDescription', ''), 'html.parser').get_text(),
-            'job_type': 'private',
-            'application_url': f"https://www.naukri.com{data.get('jdURL', '')}",
-            'external_id': data.get('jobId', ''),
-            'salary_range': IndianJobDataExtractor._format_indian_salary(data.get('packagelabel', '')),
-            'experience_level': data.get('experienceLabel', ''),
-            'education_required': data.get('education', ''),
-            'category': IndianJobDataExtractor._categorize_indian_job(data.get('industry', '')),
-            'skills_required': ', '.join(data.get('tagsAndSkills', [])),
-            'posted_date': data.get('createdDate', '')
-        }
-    
-    @staticmethod
-    def extract_indeed_india(data: Dict) -> Dict:
-        location = IndianJobDataExtractor._normalize_indian_location(data.get('formattedLocation', ''))
-        return {
-            'title': data.get('title', ''),
-            'company': data.get('company', ''),
-            'location': location,
-            'description': BeautifulSoup(data.get('summary', ''), 'html.parser').get_text(),
-            'job_type': 'private',
-            'application_url': f"https://in.indeed.com/viewjob?jk={data.get('jobkey', '')}",
-            'external_id': data.get('jobkey', ''),
-            'salary_range': IndianJobDataExtractor._format_indian_salary(data.get('salarySnippet', {}).get('text', '')),
-            'posted_date': data.get('date', ''),
-            'category': IndianJobDataExtractor._categorize_indian_job(data.get('title', '')),
-            'remote_eligible': 'remote' in data.get('title', '').lower() or 'work from home' in data.get('summary', '').lower()
-        }
-    
-    @staticmethod
-    def extract_government_jobs(data: Dict) -> Dict:
-        return {
-            'title': data.get('post_name', data.get('job_title', '')),
-            'company': data.get('organization', data.get('department', 'Government of India')),
-            'location': IndianJobDataExtractor._normalize_indian_location(data.get('location', data.get('state', ''))),
-            'description': BeautifulSoup(data.get('job_details', data.get('description', '')), 'html.parser').get_text(),
-            'job_type': 'government',
-            'application_url': data.get('apply_online_link', data.get('website', '')),
-            'external_id': data.get('notification_no', data.get('advt_no', '')),
-            'application_deadline': data.get('last_date_to_apply', ''),
-            'category': 'Government Jobs',
-            'salary_range': data.get('pay_scale', data.get('salary_range', '')),
-            'education_required': data.get('educational_qualification', ''),
-            'age_limit': data.get('age_limit', ''),
-            'total_vacancies': data.get('total_posts', ''),
-            'selection_process': data.get('selection_process', ''),
-            'application_fee': data.get('application_fee', ''),
-            'important_dates': data.get('important_dates', {})
-        }
-    
-    @staticmethod
-    def extract_freejobalert(data: Dict) -> Dict:
-        location = IndianJobDataExtractor._normalize_indian_location(data.get('location', ''))
-        return {
-            'title': data.get('job_title', ''),
-            'company': data.get('company_name', data.get('organization', '')),
-            'location': location,
-            'description': BeautifulSoup(data.get('job_description', ''), 'html.parser').get_text(),
-            'job_type': IndianJobDataExtractor._determine_job_type(data.get('job_type', data.get('category', ''))),
-            'application_url': data.get('apply_link', ''),
-            'external_id': data.get('job_id', ''),
-            'application_deadline': data.get('last_date', ''),
-            'category': IndianJobDataExtractor._categorize_indian_job(data.get('category', '')),
-            'salary_range': IndianJobDataExtractor._format_indian_salary(data.get('salary', '')),
-            'education_required': data.get('qualification', ''),
-            'experience_level': data.get('experience', ''),
-            'state': IndianJobDataExtractor._extract_state_from_location(location)
-        }
-    
-    @staticmethod
-    def _normalize_indian_location(location: str) -> str:
-        if not location:
-            return ''
-        
-        location = location.strip()
-        
-        for state, cities in INDIAN_STATES.items():
-            for city in cities:
-                if city.lower() in location.lower():
-                    state_name = 'Telangana' if state == 'telangana' else 'Andhra Pradesh'
-                    return f"{city}, {state_name}"
-        
-        location_mappings = {
-            'hyd': 'Hyderabad, Telangana',
-            'vizag': 'Visakhapatnam, Andhra Pradesh',
-            'vjw': 'Vijayawada, Andhra Pradesh',
-            'secondary': 'Secunderabad, Telangana',
-            'gnt': 'Guntur, Andhra Pradesh',
-            'tpt': 'Tirupati, Andhra Pradesh'
-        }
-        
-        for abbr, full_location in location_mappings.items():
-            if abbr in location.lower():
-                return full_location
-        
-        if any(keyword in location.lower() for keyword in ['telangana', 'ts', 't.s']):
-            return f"{location}, Telangana"
-        elif any(keyword in location.lower() for keyword in ['andhra pradesh', 'andhra', 'ap', 'a.p']):
-            return f"{location}, Andhra Pradesh"
-        
-        return location
-    
-    @staticmethod
-    def _extract_state_from_location(location: str) -> str:
-        if 'telangana' in location.lower():
-            return 'Telangana'
-        elif 'andhra pradesh' in location.lower() or 'andhra' in location.lower():
-            return 'Andhra Pradesh'
-        return ''
-    
-    @staticmethod
-    def _categorize_indian_job(category_text: str) -> str:
-        if not category_text:
-            return 'General'
-        
-        category_text = category_text.lower()
-        
-        category_mappings = {
-            'banking': 'Banking & Finance',
-            'railway': 'Railway Jobs',
-            'police': 'Police & Defence',
-            'defence': 'Police & Defence',
-            'teaching': 'Teaching & Education',
-            'education': 'Teaching & Education',
-            'medical': 'Healthcare & Medical',
-            'healthcare': 'Healthcare & Medical',
-            'it': 'IT & Software',
-            'software': 'IT & Software',
-            'engineering': 'Engineering',
-            'civil': 'Civil Services',
-            'administrative': 'Administrative Services',
-            'technical': 'Technical Services',
-            'accounts': 'Accounts & Audit',
-            'audit': 'Accounts & Audit',
-            'legal': 'Legal Services',
-            'agriculture': 'Agriculture & Rural Development',
-            'power': 'Power & Energy',
-            'energy': 'Power & Energy',
-            'transport': 'Transport',
-            'university': 'University Jobs',
-            'research': 'Research & Development'
-        }
-        
-        for keyword, mapped_category in category_mappings.items():
-            if keyword in category_text:
-                return mapped_category
-        
-        return 'Government Jobs' if any(word in category_text for word in ['government', 'govt', 'sarkari']) else 'General'
-    
-    @staticmethod
-    def _determine_job_type(job_type_text: str) -> str:
-        if not job_type_text:
-            return 'private'
-        
-        job_type_text = job_type_text.lower()
-        
-        if any(word in job_type_text for word in ['government', 'govt', 'sarkari', 'public sector', 'psu']):
-            return 'government'
-        elif any(word in job_type_text for word in ['remote', 'work from home', 'wfh']):
-            return 'remote'
-        else:
-            return 'private'
-    
-    @staticmethod
-    def _format_indian_salary(salary_text: str) -> str:
-        if not salary_text:
-            return ''
-        
-        salary_text = salary_text.strip()
-        
-        if 'lpa' in salary_text.lower() or 'per annum' in salary_text.lower():
-            return salary_text
-        
-        numbers = re.findall(r'[\d,]+', salary_text)
-        if numbers:
-            amount = int(numbers[0].replace(',', ''))
-            if amount > 100000:
-                return f"₹{amount//100000}.{(amount%100000)//10000} LPA"
-            elif amount > 1000:
-                return f"₹{amount//1000}K per month"
-            else:
-                return f"₹{amount} per month"
-        
-        return salary_text
+class UserRole(str, Enum):
+    SUPER_ADMIN = 'super_admin'
+    ADMIN = 'admin'
 
 
-INDIAN_JOB_APIS = {
-    'sarkari_result': JobAPIConfig(
-        name='Sarkari Result',
-        base_url='https://www.sarkariresult.com/api/latest-jobs',
-        supports_search=True,
-        rate_limit_per_hour=50,
-        indian_specific=True
-    ),
-    'freshersworld': JobAPIConfig(
-        name='FreshersWorld India',
-        base_url='https://www.freshersworld.com/api/jobs',
-        supports_search=True,
-        rate_limit_per_hour=100,
-        indian_specific=True
-    ),
-    'naukri': JobAPIConfig(
-        name='Naukri.com',
-        base_url='https://www.naukri.com/jobapi/v3/search',
-        api_key_required=True,
-        rate_limit_per_hour=200,
-        indian_specific=True
-    ),
-    'indeed_india': JobAPIConfig(
-        name='Indeed India',
-        base_url='https://in.indeed.com/api/jobs',
-        supports_search=True,
-        rate_limit_per_hour=150,
-        indian_specific=True
-    ),
-    'government_jobs_india': JobAPIConfig(
-        name='Government Jobs India',
-        base_url='https://www.governmentjobsindia.com/api/jobs',
-        supports_search=True,
-        rate_limit_per_hour=75,
-        indian_specific=True
-    ),
-    'freejobalert': JobAPIConfig(
-        name='Free Job Alert',
-        base_url='https://www.freejobalert.com/api/jobs',
-        supports_search=True,
-        rate_limit_per_hour=80,
-        indian_specific=True
-    ),
-    'employment_news': JobAPIConfig(
-        name='Employment News',
-        base_url='https://www.employmentnews.gov.in/api/notifications',
-        supports_search=True,
-        rate_limit_per_hour=60,
-        indian_specific=True
-    ),
-    'ibps': JobAPIConfig(
-        name='IBPS Jobs',
-        base_url='https://www.ibps.in/api/notifications',
-        supports_search=False,
-        rate_limit_per_hour=30,
-        indian_specific=True
-    ),
-    'upsc': JobAPIConfig(
-        name='UPSC Jobs',
-        base_url='https://upsc.gov.in/api/examinations',
-        supports_search=False,
-        rate_limit_per_hour=20,
-        indian_specific=True
-    ),
-    'ssc': JobAPIConfig(
-        name='SSC Jobs',
-        base_url='https://ssc.nic.in/api/notifications',
-        supports_search=False,
-        rate_limit_per_hour=25,
-        indian_specific=True
-    ),
-    'railway_jobs': JobAPIConfig(
-        name='Railway Recruitment',
-        base_url='https://www.rrcb.gov.in/api/notifications',
-        supports_search=False,
-        rate_limit_per_hour=40,
-        indian_specific=True
-    ),
-    'tspsc': JobAPIConfig(
-        name='TSPSC Jobs',
-        base_url='https://www.tspsc.gov.in/api/notifications',
-        supports_search=True,
-        rate_limit_per_hour=50,
-        indian_specific=True
-    ),
-    'appsc': JobAPIConfig(
-        name='APPSC Jobs',
-        base_url='https://psc.ap.gov.in/api/notifications',
-        supports_search=True,
-        rate_limit_per_hour=50,
-        indian_specific=True
-    )
-}
+class JobStatus(str, Enum):
+    DRAFT = 'draft'
+    PENDING = 'pending'
+    APPROVED = 'approved'
+    REJECTED = 'rejected'
+    EXPIRED = 'expired'
 
 
-class UserSchema(Schema):
-    username = fields.Str(required=True, validate=validate.Length(min=3, max=80))
-    email = fields.Email(required=True)
-    password = fields.Str(required=True, validate=validate.Length(min=8))
-    role = fields.Str(validate=validate.OneOf(['admin', 'super_admin']))
-    preferred_locations = fields.List(fields.Str(), missing=[])
-    preferred_categories = fields.List(fields.Str(), missing=[])
-    language_preference = fields.Str(validate=validate.OneOf(['english', 'hindi', 'telugu', 'mixed']), missing='english')
+class JobType(str, Enum):
+    GOVERNMENT = 'government'
+    PRIVATE = 'private'
+    REMOTE = 'remote'
 
 
-class JobSchema(Schema):
-    title = fields.Str(required=True, validate=validate.Length(min=1, max=200))
-    company = fields.Str(required=True, validate=validate.Length(min=1, max=150))
-    location = fields.Str(validate=validate.Length(max=100))
-    job_type = fields.Str(required=True, validate=validate.OneOf(['government', 'private', 'remote']))
-    category = fields.Str(required=True, validate=validate.OneOf(INDIAN_JOB_CATEGORIES))
-    description = fields.Str()
-    requirements = fields.Str()
-    salary_range = fields.Str(validate=validate.Length(max=100))
-    experience_level = fields.Str(validate=validate.Length(max=50))
-    education_required = fields.Str(validate=validate.OneOf(EDUCATION_QUALIFICATIONS + ['Any Degree', 'As per notification']))
-    application_url = fields.Url()
-    application_deadline = fields.Date()
-    age_limit = fields.Str(validate=validate.Length(max=50))
-    application_fee = fields.Str(validate=validate.Length(max=100))
-    selection_process = fields.Str()
-    total_vacancies = fields.Str(validate=validate.Length(max=50))
-    state = fields.Str(validate=validate.OneOf(['Telangana', 'Andhra Pradesh', 'All India']))
+class ServiceStatus(str, Enum):
+    ACTIVE = 'active'
+    INACTIVE = 'inactive'
 
 
-class ServiceSchema(Schema):
-    name = fields.Str(required=True, validate=validate.Length(min=1, max=150))
-    category = fields.Str(required=True, validate=validate.OneOf([
-        'LIC Insurance', 'PAN Card Services', 'Aadhar Services', 'Passport Services',
-        'Printing & Xerox', 'Travel & Tickets', 'Bill Payments', 'Banking Services',
-        'Loan Services', 'Property Services', 'Legal Services', 'Educational Services',
-        'Government Forms', 'Certificates', 'Translation Services', 'Computer Services'
-    ]))
-    description = fields.Str()
-    price_range = fields.Str(validate=validate.Length(max=100))
-    contact_info = fields.Dict()
-    service_areas = fields.Str(validate=validate.Length(max=200))
-    languages_supported = fields.List(fields.Str(validate=validate.OneOf(['English', 'Hindi', 'Telugu'])), missing=['English'])
+class AdStatus(str, Enum):
+    ACTIVE = 'active'
+    PAUSED = 'paused'
+    ARCHIVED = 'archived'
 
 
 class User(db.Model):
     __tablename__ = 'users'
     
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    username = db.Column(db.String(80), unique=True, nullable=False, index=True)
-    email = db.Column(db.String(120), unique=True, nullable=False, index=True)
-    password_hash = db.Column(db.String(128), nullable=False)
-    role = db.Column(db.Enum('super_admin', 'admin', name='user_roles'), nullable=False, default='admin')
+    email = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    full_name = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.Enum(UserRole), nullable=False, default=UserRole.ADMIN)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
-    email_verified = db.Column(db.Boolean, default=False)
-    phone_number = db.Column(db.String(15))
-    preferred_locations = db.Column(db.ARRAY(db.String(100)), default=list)
-    preferred_categories = db.Column(db.ARRAY(db.String(100)), default=list)
-    language_preference = db.Column(db.String(20), default='english')
-    notification_settings = db.Column(JSONB, default=dict)
-    last_login = db.Column(db.DateTime)
-    login_attempts = db.Column(db.Integer, default=0)
-    locked_until = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_login = db.Column(db.DateTime(timezone=True))
+    created_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'))
     
-    jobs = db.relationship('Job', backref='author', lazy=True, cascade='all, delete-orphan')
-    services = db.relationship('Service', backref='author', lazy=True, cascade='all, delete-orphan')
-    
+    jobs = db.relationship('Job', back_populates='created_by', foreign_keys='Job.created_by_id')
+    services = db.relationship('Service', back_populates='created_by', foreign_keys='Service.created_by_id')
+    audit_logs = db.relationship('AuditLog', back_populates='user')
+
     def set_password(self, password: str):
-        self.password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt(rounds=12)).decode('utf-8')
-    
+        self.password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
+
     def check_password(self, password: str) -> bool:
-        return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
-    
-    def is_locked(self) -> bool:
-        return self.locked_until and self.locked_until > datetime.utcnow()
-    
-    def lock_account(self, minutes: int = 30):
-        self.locked_until = datetime.utcnow() + timedelta(minutes=minutes)
-        self.login_attempts = 0
-    
-    def reset_login_attempts(self):
-        self.login_attempts = 0
-        self.locked_until = None
-    
-    def to_dict(self, include_sensitive: bool = False) -> Dict[str, Any]:
+        return bcrypt.check_password_hash(self.password_hash, password)
+
+    def to_dict(self, include_sensitive=False):
         data = {
             'id': str(self.id),
-            'username': self.username,
-            'email': self.email if include_sensitive else None,
-            'role': self.role,
+            'email': self.email,
+            'full_name': self.full_name,
+            'role': self.role.value,
             'is_active': self.is_active,
-            'email_verified': self.email_verified,
-            'phone_number': self.phone_number if include_sensitive else None,
-            'preferred_locations': self.preferred_locations,
-            'preferred_categories': self.preferred_categories,
-            'language_preference': self.language_preference,
             'last_login': self.last_login.isoformat() if self.last_login else None,
-            'created_at': self.created_at.isoformat()
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
-        return {k: v for k, v in data.items() if v is not None}
+        return data
 
 
 class JobSource(db.Model):
     __tablename__ = 'job_sources'
     
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = db.Column(db.String(100), nullable=False)
-    api_identifier = db.Column(db.String(50), nullable=False, unique=True)
-    api_url = db.Column(db.String(500))
-    api_key = db.Column(db.String(200))
-    source_type = db.Column(db.Enum('api', 'manual', 'rss', 'scraper', name='source_types'), nullable=False)
-    is_active = db.Column(db.Boolean, default=True)
-    target_states = db.Column(db.ARRAY(db.String(50)), default=['Telangana', 'Andhra Pradesh'])
-    priority = db.Column(db.Integer, default=1)
-    last_sync = db.Column(db.DateTime)
-    last_error = db.Column(db.Text)
-    sync_interval_minutes = db.Column(db.Integer, default=60)
-    rate_limit_per_hour = db.Column(db.Integer, default=100)
-    requests_made_this_hour = db.Column(db.Integer, default=0)
-    rate_limit_reset_time = db.Column(db.DateTime, default=datetime.utcnow)
-    success_count = db.Column(db.Integer, default=0)
-    error_count = db.Column(db.Integer, default=0)
-    jobs_imported_today = db.Column(db.Integer, default=0)
-    config = db.Column(JSONB, default=dict)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    name = db.Column(db.String(255), nullable=False, unique=True)
+    source_type = db.Column(db.String(50), nullable=False)
+    api_url = db.Column(db.Text)
+    api_key = db.Column(db.String(255))
+    config = db.Column(JSONB, default={})
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    last_sync = db.Column(db.DateTime(timezone=True))
+    sync_frequency_minutes = db.Column(db.Integer, default=60)
+    created_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    jobs = db.relationship('Job', backref='source', lazy=True)
-    
-    def can_make_request(self) -> bool:
-        now = datetime.utcnow()
-        if now >= self.rate_limit_reset_time:
-            self.requests_made_this_hour = 0
-            self.rate_limit_reset_time = now + timedelta(hours=1)
-            db.session.commit()
-        
-        return self.requests_made_this_hour < self.rate_limit_per_hour
-    
-    def increment_request_count(self):
-        self.requests_made_this_hour += 1
-        db.session.commit()
-    
-    def record_success(self, jobs_count: int = 0):
-        self.success_count += 1
-        self.jobs_imported_today += jobs_count
-        self.last_error = None
-        self.last_sync = datetime.utcnow()
-        db.session.commit()
-    
-    def record_error(self, error_message: str):
-        self.error_count += 1
-        self.last_error = error_message
-        db.session.commit()
+    jobs = db.relationship('Job', back_populates='source')
+
+    def to_dict(self):
+        return {
+            'id': str(self.id),
+            'name': self.name,
+            'source_type': self.source_type,
+            'api_url': self.api_url,
+            'is_active': self.is_active,
+            'last_sync': self.last_sync.isoformat() if self.last_sync else None,
+            'sync_frequency_minutes': self.sync_frequency_minutes,
+            'created_at': self.created_at.isoformat(),
+        }
 
 
 class Job(db.Model):
     __tablename__ = 'jobs'
     
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    title = db.Column(db.String(200), nullable=False, index=True)
-    company = db.Column(db.String(150), nullable=False, index=True)
-    location = db.Column(db.String(100))
-    state = db.Column(db.String(50), index=True)
-    job_type = db.Column(db.Enum('government', 'private', 'remote', name='job_types'), nullable=False, index=True)
-    category = db.Column(db.String(100), nullable=False, index=True)
-    description = db.Column(db.Text)
-    requirements = db.Column(db.Text)
-    salary_range = db.Column(db.String(100))
-    experience_level = db.Column(db.String(50))
-    education_required = db.Column(db.String(100))
-    age_limit = db.Column(db.String(50))
-    application_deadline = db.Column(db.Date, index=True)
-    application_url = db.Column(db.String(500))
-    application_fee = db.Column(db.String(100))
-    selection_process = db.Column(db.Text)
-    total_vacancies = db.Column(db.String(50))
-    exam_date = db.Column(db.Date)
-    result_date = db.Column(db.Date)
-    important_dates = db.Column(JSONB, default=dict)
-    notification_pdf = db.Column(db.String(500))
-    external_id = db.Column(db.String(100), index=True)
-    poster_image_url = db.Column(db.String(500))
-    status = db.Column(db.Enum('draft', 'published', 'archived', 'moderation', 'expired', name='job_status'), default='published', index=True)
-    is_featured = db.Column(db.Boolean, default=False, index=True)
-    is_urgent = db.Column(db.Boolean, default=False)
-    view_count = db.Column(db.Integer, default=0)
-    click_count = db.Column(db.Integer, default=0)
-    share_count = db.Column(db.Integer, default=0)
-    bookmark_count = db.Column(db.Integer, default=0)
-    search_vector = db.Column(TSVECTOR)
-    tags = db.Column(db.ARRAY(db.String(50)), default=list)
-    remote_eligible = db.Column(db.Boolean, default=False)
-    salary_min = db.Column(db.Integer)
-    salary_max = db.Column(db.Integer)
-    currency = db.Column(db.String(3), default='INR')
-    language = db.Column(db.String(50), default='english,hindi')
-    scraped_at = db.Column(db.DateTime)
-    expires_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    author_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'), nullable=False)
+    title = db.Column(db.String(500), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    company = db.Column(db.String(255), nullable=False)
+    location = db.Column(db.String(255))
+    job_type = db.Column(db.Enum(JobType), nullable=False)
+    status = db.Column(db.Enum(JobStatus), nullable=False, default=JobStatus.PENDING)
+    salary_min = db.Column(db.Numeric(12, 2))
+    salary_max = db.Column(db.Numeric(12, 2))
+    application_url = db.Column(db.Text)
+    application_deadline = db.Column(db.Date)
+    qualifications = db.Column(JSONB, default=[])
+    tags = db.Column(JSONB, default=[])
+    poster_url = db.Column(db.Text)
+    poster_cloudinary_id = db.Column(db.String(255))
     source_id = db.Column(UUID(as_uuid=True), db.ForeignKey('job_sources.id'))
+    external_id = db.Column(db.String(255))
+    view_count = db.Column(db.Integer, default=0, nullable=False)
+    apply_count = db.Column(db.Integer, default=0, nullable=False)
+    is_featured = db.Column(db.Boolean, default=False, nullable=False)
+    published_at = db.Column(db.DateTime(timezone=True))
+    created_by_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'))
+    created_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    source = db.relationship('JobSource', back_populates='jobs')
+    created_by = db.relationship('User', back_populates='jobs', foreign_keys=[created_by_id])
+
     __table_args__ = (
-        Index('ix_job_search', 'search_vector', postgresql_using='gin'),
-        Index('ix_job_location_type_state', 'location', 'job_type', 'state'),
-        Index('ix_job_category_deadline', 'category', 'application_deadline'),
-        Index('ix_job_external_source', 'external_id', 'source_id'),
-        Index('ix_job_state_category', 'state', 'category'),
+        Index('idx_job_status_type', 'status', 'job_type'),
+        Index('idx_job_published', 'published_at'),
+        Index('idx_job_deadline', 'application_deadline'),
     )
-    
-    def increment_view_count(self):
-        self.view_count += 1
-        db.session.commit()
-    
-    def increment_click_count(self):
-        self.click_count += 1
-        db.session.commit()
-    
-    def increment_share_count(self):
-        self.share_count += 1
-        db.session.commit()
-    
-    def increment_bookmark_count(self):
-        self.bookmark_count += 1
-        db.session.commit()
-    
-    def is_expired(self) -> bool:
-        if self.application_deadline:
-            return self.application_deadline < datetime.now().date()
-        if self.expires_at:
-            return self.expires_at < datetime.utcnow()
-        return False
-    
-    def extract_salary_range(self):
-        if not self.salary_range:
-            return
-        
-        salary_text = self.salary_range.lower()
-        
-        if 'lpa' in salary_text or 'per annum' in salary_text:
-            numbers = re.findall(r'[\d\.]+', salary_text)
-            if len(numbers) >= 2:
-                self.salary_min = int(float(numbers[0]) * 100000)
-                self.salary_max = int(float(numbers[1]) * 100000)
-            elif len(numbers) == 1:
-                amount = int(float(numbers[0]) * 100000)
-                self.salary_min = amount
-                self.salary_max = amount
-        else:
-            numbers = re.findall(r'\d+', salary_text)
-            if len(numbers) >= 2:
-                self.salary_min = int(numbers[0])
-                self.salary_max = int(numbers[1])
-    
-    def generate_tags(self):
-        text = f"{self.title} {self.description} {self.requirements}".lower()
-        
-        indian_keywords = [
-            'sarkari', 'government', 'psu', 'banking', 'railway', 'ssc', 'upsc', 'ibps',
-            'teaching', 'police', 'defence', 'medical', 'engineering', 'clerk', 'officer',
-            'assistant', 'junior', 'senior', 'graduate', 'diploma', 'degree', 'hindi',
-            'english', 'telugu', 'written exam', 'interview', 'group discussion'
-        ]
-        
-        location_keywords = ['hyderabad', 'vijayawada', 'visakhapatnam', 'guntur', 'warangal',
-                           'tirupati', 'nellore', 'kurnool', 'telangana', 'andhra pradesh']
-        
-        all_keywords = indian_keywords + location_keywords
-        
-        tags = []
-        for keyword in all_keywords:
-            if keyword in text and keyword not in tags:
-                tags.append(keyword)
-        
-        if self.job_type == 'government':
-            tags.append('sarkari-job')
-        
-        if self.state:
-            tags.append(self.state.lower().replace(' ', '-'))
-        
-        self.tags = tags[:15]
-    
-    def to_dict(self, include_stats: bool = False) -> Dict[str, Any]:
+
+    def to_dict(self, include_analytics=False):
         data = {
             'id': str(self.id),
             'title': self.title,
+            'description': self.description,
             'company': self.company,
             'location': self.location,
-            'state': self.state,
-            'job_type': self.job_type,
-            'category': self.category,
-            'description': self.description,
-            'requirements': self.requirements,
-            'salary_range': self.salary_range,
-            'salary_min': self.salary_min,
-            'salary_max': self.salary_max,
-            'currency': self.currency,
-            'experience_level': self.experience_level,
-            'education_required': self.education_required,
-            'age_limit': self.age_limit,
-            'application_deadline': self.application_deadline.isoformat() if self.application_deadline else None,
+            'job_type': self.job_type.value,
+            'status': self.status.value,
+            'salary_min': float(self.salary_min) if self.salary_min else None,
+            'salary_max': float(self.salary_max) if self.salary_max else None,
             'application_url': self.application_url,
-            'application_fee': self.application_fee,
-            'selection_process': self.selection_process,
-            'total_vacancies': self.total_vacancies,
-            'exam_date': self.exam_date.isoformat() if self.exam_date else None,
-            'result_date': self.result_date.isoformat() if self.result_date else None,
-            'important_dates': self.important_dates,
-            'notification_pdf': self.notification_pdf,
-            'poster_image_url': self.poster_image_url,
-            'status': self.status,
-            'is_featured': self.is_featured,
-            'is_urgent': self.is_urgent,
+            'application_deadline': self.application_deadline.isoformat() if self.application_deadline else None,
+            'qualifications': self.qualifications,
             'tags': self.tags,
-            'remote_eligible': self.remote_eligible,
-            'language': self.language,
+            'poster_url': self.poster_url,
+            'is_featured': self.is_featured,
+            'published_at': self.published_at.isoformat() if self.published_at else None,
             'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
-            'author': self.author.username,
-            'source': self.source.name if self.source else 'Manual'
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
-        if include_stats:
+        if include_analytics:
             data.update({
                 'view_count': self.view_count,
-                'click_count': self.click_count,
-                'share_count': self.share_count,
-                'bookmark_count': self.bookmark_count,
-                'ctr': round((self.click_count / self.view_count * 100), 2) if self.view_count > 0 else 0
+                'apply_count': self.apply_count,
             })
         return data
 
@@ -788,65 +233,57 @@ class Service(db.Model):
     __tablename__ = 'services'
     
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = db.Column(db.String(150), nullable=False, index=True)
-    category = db.Column(db.String(100), nullable=False, index=True)
-    description = db.Column(db.Text)
-    price_range = db.Column(db.String(100))
-    contact_info = db.Column(JSONB, default=dict)
-    service_areas = db.Column(db.String(200))
-    languages_supported = db.Column(db.ARRAY(db.String(20)), default=['English'])
-    office_address = db.Column(db.Text)
-    working_hours = db.Column(JSONB, default=dict)
-    image_url = db.Column(db.String(500))
-    is_active = db.Column(db.Boolean, default=True)
-    is_featured = db.Column(db.Boolean, default=False)
-    is_verified = db.Column(db.Boolean, default=False)
-    view_count = db.Column(db.Integer, default=0)
-    rating = db.Column(db.Float, default=0.0)
-    review_count = db.Column(db.Integer, default=0)
-    tags = db.Column(db.ARRAY(db.String(50)), default=list)
-    availability = db.Column(JSONB, default=dict)
-    social_links = db.Column(JSONB, default=dict)
-    documents_handled = db.Column(db.ARRAY(db.String(100)), default=list)
-    government_authorized = db.Column(db.Boolean, default=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    category = db.Column(db.String(100), nullable=False)
+    icon_url = db.Column(db.Text)
+    icon_cloudinary_id = db.Column(db.String(255))
+    contact_person = db.Column(db.String(255))
+    contact_phone = db.Column(db.String(20))
+    contact_email = db.Column(db.String(255))
+    contact_address = db.Column(db.Text)
+    whatsapp_number = db.Column(db.String(20))
+    pricing_info = db.Column(db.Text)
+    features = db.Column(JSONB, default=[])
+    status = db.Column(db.Enum(ServiceStatus), nullable=False, default=ServiceStatus.ACTIVE)
+    view_count = db.Column(db.Integer, default=0, nullable=False)
+    inquiry_count = db.Column(db.Integer, default=0, nullable=False)
+    display_order = db.Column(db.Integer, default=0)
+    created_by_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'))
+    created_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    author_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'), nullable=False)
-    
-    def increment_view_count(self):
-        self.view_count += 1
-        db.session.commit()
-    
-    def to_dict(self, include_stats: bool = False) -> Dict[str, Any]:
+    created_by = db.relationship('User', back_populates='services', foreign_keys=[created_by_id])
+
+    __table_args__ = (
+        Index('idx_service_status_category', 'status', 'category'),
+        Index('idx_service_order', 'display_order'),
+    )
+
+    def to_dict(self, include_analytics=False):
         data = {
             'id': str(self.id),
-            'name': self.name,
-            'category': self.category,
+            'title': self.title,
             'description': self.description,
-            'price_range': self.price_range,
-            'contact_info': self.contact_info,
-            'service_areas': self.service_areas,
-            'languages_supported': self.languages_supported,
-            'office_address': self.office_address,
-            'working_hours': self.working_hours,
-            'image_url': self.image_url,
-            'is_active': self.is_active,
-            'is_featured': self.is_featured,
-            'is_verified': self.is_verified,
-            'rating': self.rating,
-            'review_count': self.review_count,
-            'tags': self.tags,
-            'availability': self.availability,
-            'social_links': self.social_links,
-            'documents_handled': self.documents_handled,
-            'government_authorized': self.government_authorized,
+            'category': self.category,
+            'icon_url': self.icon_url,
+            'contact_person': self.contact_person,
+            'contact_phone': self.contact_phone,
+            'contact_email': self.contact_email,
+            'contact_address': self.contact_address,
+            'whatsapp_number': self.whatsapp_number,
+            'pricing_info': self.pricing_info,
+            'features': self.features,
+            'status': self.status.value,
+            'display_order': self.display_order,
             'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
-            'author': self.author.username
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
-        if include_stats:
-            data['view_count'] = self.view_count
+        if include_analytics:
+            data.update({
+                'view_count': self.view_count,
+                'inquiry_count': self.inquiry_count,
+            })
         return data
 
 
@@ -854,1087 +291,1485 @@ class Ad(db.Model):
     __tablename__ = 'ads'
     
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = db.Column(db.String(100), nullable=False)
-    ad_unit_id = db.Column(db.String(100), nullable=False)
-    placement = db.Column(db.Enum('header', 'sidebar', 'footer', 'content', 'mobile_banner', 'interstitial', name='ad_placements'), nullable=False)
-    size = db.Column(db.String(50))
-    is_active = db.Column(db.Boolean, default=True)
-    priority = db.Column(db.Integer, default=1)
-    target_locations = db.Column(db.ARRAY(db.String(50)), default=['Telangana', 'Andhra Pradesh'])
-    target_categories = db.Column(db.ARRAY(db.String(100)), default=list)
-    start_date = db.Column(db.DateTime)
-    end_date = db.Column(db.DateTime)
-    impression_count = db.Column(db.Integer, default=0)
-    click_count = db.Column(db.Integer, default=0)
-    revenue = db.Column(db.Float, default=0.0)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    def is_active_now(self) -> bool:
-        now = datetime.utcnow()
-        if self.start_date and now < self.start_date:
-            return False
-        if self.end_date and now > self.end_date:
-            return False
-        return self.is_active
-    
-    def increment_impression(self):
-        self.impression_count += 1
-        db.session.commit()
-    
-    def increment_click(self, revenue: float = 0.0):
-        self.click_count += 1
-        self.revenue += revenue
-        db.session.commit()
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
+    name = db.Column(db.String(255), nullable=False)
+    ad_unit_id = db.Column(db.String(255), nullable=False)
+    placement = db.Column(db.String(100), nullable=False)
+    status = db.Column(db.Enum(AdStatus), nullable=False, default=AdStatus.ACTIVE)
+    config = db.Column(JSONB, default={})
+    impression_count = db.Column(db.BigInteger, default=0, nullable=False)
+    click_count = db.Column(db.BigInteger, default=0, nullable=False)
+    revenue = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self, include_analytics=False):
+        data = {
             'id': str(self.id),
             'name': self.name,
             'ad_unit_id': self.ad_unit_id,
             'placement': self.placement,
-            'size': self.size,
-            'is_active': self.is_active,
-            'priority': self.priority,
-            'target_locations': self.target_locations,
-            'target_categories': self.target_categories,
-            'impression_count': self.impression_count,
-            'click_count': self.click_count,
-            'revenue': self.revenue,
-            'ctr': round((self.click_count / self.impression_count * 100), 2) if self.impression_count > 0 else 0,
-            'cpm': round((self.revenue / self.impression_count * 1000), 2) if self.impression_count > 0 else 0
+            'status': self.status.value,
+            'config': self.config,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
+        if include_analytics:
+            data.update({
+                'impression_count': self.impression_count,
+                'click_count': self.click_count,
+                'revenue': float(self.revenue),
+            })
+        return data
 
 
 class AnalyticsEvent(db.Model):
     __tablename__ = 'analytics_events'
     
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    event_type = db.Column(db.Enum('page_view', 'job_view', 'service_view', 'ad_impression', 'ad_click', 'search', 'apply_click', 'share', 'bookmark', name='event_types'), nullable=False, index=True)
-    resource_id = db.Column(UUID(as_uuid=True), index=True)
-    resource_type = db.Column(db.String(50))
-    user_agent = db.Column(db.String(500))
+    event_type = db.Column(db.String(50), nullable=False)
+    entity_type = db.Column(db.String(50))
+    entity_id = db.Column(UUID(as_uuid=True))
+    user_id = db.Column(UUID(as_uuid=True))
+    session_id = db.Column(db.String(255))
     ip_address = db.Column(db.String(45))
-    referrer = db.Column(db.String(500))
-    session_id = db.Column(db.String(100))
-    user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'))
-    location = db.Column(db.String(100))
-    device_type = db.Column(db.String(20))
-    browser = db.Column(db.String(50))
-    metadata = db.Column(JSONB, default=dict)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
-    
-    @staticmethod
-    def log_event(event_type: str, resource_id: str = None, resource_type: str = None, metadata: Dict = None):
-        try:
-            user_agent = request.headers.get('User-Agent', '')
-            device_type = 'mobile' if any(mobile in user_agent.lower() for mobile in ['mobile', 'android', 'iphone']) else 'desktop'
-            
-            browser = 'unknown'
-            if 'chrome' in user_agent.lower():
-                browser = 'chrome'
-            elif 'firefox' in user_agent.lower():
-                browser = 'firefox'
-            elif 'safari' in user_agent.lower():
-                browser = 'safari'
-            elif 'edge' in user_agent.lower():
-                browser = 'edge'
-            
-            event = AnalyticsEvent(
-                event_type=event_type,
-                resource_id=resource_id,
-                resource_type=resource_type,
-                user_agent=user_agent,
-                ip_address=request.remote_addr,
-                referrer=request.headers.get('Referer'),
-                session_id=session.get('session_id'),
-                user_id=g.current_user.id if hasattr(g, 'current_user') else None,
-                device_type=device_type,
-                browser=browser,
-                metadata=metadata or {}
-            )
-            db.session.add(event)
-            db.session.commit()
-        except Exception as e:
-            logger.error("Failed to log analytics event", error=str(e), event_type=event_type)
+    user_agent = db.Column(db.Text)
+    referrer = db.Column(db.Text)
+    metadata = db.Column(JSONB, default={})
+    created_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False, index=True)
+
+    __table_args__ = (
+        Index('idx_analytics_type_entity', 'event_type', 'entity_type', 'entity_id'),
+        Index('idx_analytics_session', 'session_id'),
+        Index('idx_analytics_created', 'created_at'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': str(self.id),
+            'event_type': self.event_type,
+            'entity_type': self.entity_type,
+            'entity_id': str(self.entity_id) if self.entity_id else None,
+            'metadata': self.metadata,
+            'created_at': self.created_at.isoformat(),
+        }
 
 
 class AuditLog(db.Model):
     __tablename__ = 'audit_logs'
     
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'))
-    action = db.Column(db.String(100), nullable=False, index=True)
-    resource_type = db.Column(db.String(50), index=True)
-    resource_id = db.Column(UUID(as_uuid=True))
-    old_values = db.Column(JSONB)
-    new_values = db.Column(JSONB)
+    user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'), nullable=False)
+    action = db.Column(db.String(100), nullable=False)
+    entity_type = db.Column(db.String(50), nullable=False)
+    entity_id = db.Column(UUID(as_uuid=True))
+    changes = db.Column(JSONB, default={})
     ip_address = db.Column(db.String(45))
-    user_agent = db.Column(db.String(500))
-    success = db.Column(db.Boolean, default=True)
-    error_message = db.Column(db.Text)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    user_agent = db.Column(db.Text)
+    created_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False, index=True)
     
-    user = db.relationship('User', backref='audit_logs')
-    
-    @staticmethod
-    def log_action(action: str, resource_type: str = None, resource_id: str = None, 
-                  old_values: Dict = None, new_values: Dict = None, success: bool = True, error_message: str = None):
-        try:
-            log = AuditLog(
-                user_id=g.current_user.id if hasattr(g, 'current_user') else None,
-                action=action,
-                resource_type=resource_type,
-                resource_id=resource_id,
-                old_values=old_values,
-                new_values=new_values,
-                ip_address=request.remote_addr,
-                user_agent=request.headers.get('User-Agent'),
-                success=success,
-                error_message=error_message
-            )
-            db.session.add(log)
-            db.session.commit()
-        except Exception as e:
-            logger.error("Failed to create audit log", error=str(e), action=action)
+    user = db.relationship('User', back_populates='audit_logs')
 
-
-def create_celery(app):
-    celery = Celery(
-        app.import_name,
-        broker=app.config['CELERY_BROKER_URL'],
-        backend=app.config['CELERY_RESULT_BACKEND']
+    __table_args__ = (
+        Index('idx_audit_user_action', 'user_id', 'action'),
+        Index('idx_audit_entity', 'entity_type', 'entity_id'),
     )
-    
-    celery.conf.update(
-        task_serializer='json',
-        accept_content=['json'],
-        result_serializer='json',
-        timezone='Asia/Kolkata',
-        enable_utc=True,
-        task_routes={
-            'sync_indian_jobs': {'queue': 'indian_jobs'},
-            'send_notification': {'queue': 'notifications'},
-            'process_analytics': {'queue': 'analytics'},
-        },
-        beat_schedule={
-            'sync-indian-job-sources': {
-                'task': 'sync_indian_jobs',
-                'schedule': crontab(minute=0, hour='*/2'),
-            },
-            'sync-government-jobs': {
-                'task': 'sync_government_jobs',
-                'schedule': crontab(minute=30, hour='*/4'),
-            },
-            'cleanup-expired-jobs': {
-                'task': 'cleanup_expired_jobs',
-                'schedule': crontab(hour=3, minute=0),
-            },
-            'update-urgent-jobs': {
-                'task': 'update_urgent_jobs',
-                'schedule': crontab(minute='*/30'),
-            },
+
+    def to_dict(self):
+        return {
+            'id': str(self.id),
+            'user_id': str(self.user_id),
+            'user_email': self.user.email if self.user else None,
+            'action': self.action,
+            'entity_type': self.entity_type,
+            'entity_id': str(self.entity_id) if self.entity_id else None,
+            'changes': self.changes,
+            'ip_address': self.ip_address,
+            'created_at': self.created_at.isoformat(),
         }
-    )
-    
-    class ContextTask(celery.Task):
-        def __call__(self, *args, **kwargs):
-            with app.app_context():
-                return self.run(*args, **kwargs)
-    
-    celery.Task = ContextTask
-    return celery
 
 
-def init_cloudinary(app):
-    cloudinary.config(
-        cloud_name=app.config['CLOUDINARY_CLOUD_NAME'],
-        api_key=app.config['CLOUDINARY_API_KEY'],
-        api_secret=app.config['CLOUDINARY_API_SECRET'],
-        secure=True
-    )
-
-
-def require_auth(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        token = None
-        
-        if 'Authorization' in request.headers:
-            auth_header = request.headers['Authorization']
-            try:
-                token = auth_header.split(" ")[1]
-            except IndexError:
-                return jsonify({'error': 'Invalid authorization header format'}), 401
-        elif 'user_id' in session:
-            user = User.query.get(session['user_id'])
-            if user and user.is_active:
-                g.current_user = user
-                return f(*args, **kwargs)
-        
-        if not token:
-            return jsonify({'error': 'Authentication token missing'}), 401
-        
-        if token in blacklisted_tokens:
-            return jsonify({'error': 'Token has been revoked'}), 401
-        
-        try:
-            payload = jwt.decode(token, current_app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
-            user = User.query.get(payload['sub'])
-        except jwt.ExpiredSignatureError:
-            return jsonify({'error': 'Token has expired'}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({'error': 'Invalid token'}), 401
-        
-        if not user or not user.is_active:
-            return jsonify({'error': 'User not found or inactive'}), 401
-        
-        g.current_user = user
-        return f(*args, **kwargs)
+class SiteSettings(db.Model):
+    __tablename__ = 'site_settings'
     
-    return decorated_function
+    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key = db.Column(db.String(100), nullable=False, unique=True, index=True)
+    value = db.Column(JSONB, nullable=False)
+    description = db.Column(db.Text)
+    updated_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
-
-def require_role(required_role):
-    def decorator(f):
-        @wraps(f)
-        def decorated_function(*args, **kwargs):
-            if not hasattr(g, 'current_user'):
-                return jsonify({'error': 'Authentication required'}), 401
-            
-            if required_role == 'super_admin' and g.current_user.role != 'super_admin':
-                return jsonify({'error': 'Super admin access required'}), 403
-            elif required_role == 'admin' and g.current_user.role not in ['admin', 'super_admin']:
-                return jsonify({'error': 'Admin access required'}), 403
-            
-            return f(*args, **kwargs)
-        return decorated_function
-    return decorator
-
-
-def validate_json_request(schema_class):
-    def decorator(f):
-        @wraps(f)
-        def decorated_function(*args, **kwargs):
-            if not request.is_json:
-                return jsonify({'error': 'Content-Type must be application/json'}), 400
-            
-            data = request.get_json()
-            if not data:
-                return jsonify({'error': 'Invalid JSON payload'}), 400
-            
-            schema = schema_class()
-            try:
-                validated_data = schema.load(data)
-                g.validated_data = validated_data
-            except ValidationError as e:
-                return jsonify({'error': 'Validation failed', 'details': e.messages}), 400
-            
-            return f(*args, **kwargs)
-        return decorated_function
-    return decorator
-
-
-def sanitize_html(content: str) -> str:
-    if not content:
-        return content
-    
-    allowed_tags = ['p', 'br', 'strong', 'em', 'u', 'ol', 'ul', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']
-    allowed_attributes = {'a': ['href', 'target']}
-    
-    return bleach.clean(content, tags=allowed_tags, attributes=allowed_attributes, strip=True)
-
-
-def handle_file_upload(file, folder='general', max_size_mb=10):
-    if not file:
-        return None, 'No file provided'
-    
-    if file.content_length and file.content_length > max_size_mb * 1024 * 1024:
-        return None, f'File too large. Maximum size is {max_size_mb}MB'
-    
-    allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf'}
-    file_ext = os.path.splitext(secure_filename(file.filename))[1].lower()
-    
-    if file_ext not in allowed_extensions:
-        return None, 'Invalid file type. Only images and PDFs are allowed'
-    
-    try:
-        resource_type = "image" if file_ext != '.pdf' else "raw"
-        result = cloudinary.uploader.upload(
-            file,
-            folder=f"sridhar-services/{folder}",
-            resource_type=resource_type,
-            quality="auto:good" if resource_type == "image" else None,
-            fetch_format="auto" if resource_type == "image" else None,
-            transformation=[
-                {'width': 1200, 'height': 800, 'crop': 'limit'},
-                {'quality': 'auto:good'}
-            ] if resource_type == "image" else None
-        )
-        return result['secure_url'], None
-    except Exception as e:
-        logger.error("File upload failed", error=str(e))
-        return None, 'File upload failed'
-
-
-async def fetch_indian_jobs_from_api_async(source: JobSource, session: aiohttp.ClientSession) -> List[Dict]:
-    if not source.can_make_request():
-        logger.warning("Rate limit exceeded for source", source=source.name)
-        return []
-    
-    api_config = INDIAN_JOB_APIS.get(source.api_identifier)
-    if not api_config:
-        logger.error("Unknown API identifier", identifier=source.api_identifier)
-        return []
-    
-    headers = {'User-Agent': 'Sridhar-Services-Bot/1.0 (Indian Jobs Aggregator)'}
-    
-    if source.api_key and api_config.api_key_required:
-        if api_config.auth_header == 'Authorization':
-            headers['Authorization'] = f'Bearer {source.api_key}'
-        else:
-            headers[api_config.auth_header] = source.api_key
-    
-    params = {}
-    if api_config.supports_search and api_config.location_filter:
-        params['location'] = 'Telangana,Andhra Pradesh'
-        params['state'] = 'TS,AP'
-    
-    try:
-        source.increment_request_count()
-        
-        async with session.get(source.api_url, headers=headers, params=params, timeout=30) as response:
-            if response.status == 429:
-                logger.warning("Rate limited by API", source=source.name)
-                return []
-            
-            response.raise_for_status()
-            
-            if api_config.data_format == 'json':
-                data = await response.json()
-            else:
-                text = await response.text()
-                data = feedparser.parse(text)
-            
-            if isinstance(data, dict):
-                if 'jobs' in data:
-                    jobs_data = data['jobs']
-                elif 'data' in data:
-                    jobs_data = data['data']
-                elif 'results' in data:
-                    jobs_data = data['results']
-                elif 'notifications' in data:
-                    jobs_data = data['notifications']
-                else:
-                    jobs_data = [data]
-            else:
-                jobs_data = data if isinstance(data, list) else []
-            
-            filtered_jobs = []
-            for job in jobs_data:
-                location = job.get('location', job.get('state', ''))
-                if any(state_keyword in location.lower() for state_keyword in ['telangana', 'andhra pradesh', 'hyderabad', 'vijayawada', 'visakhapatnam', 'ts', 'ap']):
-                    filtered_jobs.append(job)
-            
-            source.record_success(len(filtered_jobs))
-            return filtered_jobs[:150]
-    
-    except asyncio.TimeoutError:
-        error_msg = "Request timeout"
-        logger.error("API request timeout", source=source.name)
-        source.record_error(error_msg)
-        JOB_SYNC_ERRORS.labels(source=source.name).inc()
-        return []
-    
-    except Exception as e:
-        error_msg = f"API request failed: {str(e)}"
-        logger.error("API request failed", source=source.name, error=str(e))
-        source.record_error(error_msg)
-        JOB_SYNC_ERRORS.labels(source=source.name).inc()
-        return []
-
-
-def process_imported_indian_job(job_data: Dict, source: JobSource) -> Optional[Job]:
-    try:
-        api_config = INDIAN_JOB_APIS.get(source.api_identifier)
-        if not api_config:
-            return None
-        
-        extractor_map = {
-            'sarkari_result': IndianJobDataExtractor.extract_sarkari_result,
-            'freshersworld': IndianJobDataExtractor.extract_freshersworld,
-            'naukri': IndianJobDataExtractor.extract_naukri,
-            'indeed_india': IndianJobDataExtractor.extract_indeed_india,
-            'government_jobs_india': IndianJobDataExtractor.extract_government_jobs,
-            'freejobalert': IndianJobDataExtractor.extract_freejobalert,
+    def to_dict(self):
+        return {
+            'id': str(self.id),
+            'key': self.key,
+            'value': self.value,
+            'description': self.description,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
-        
-        extractor = extractor_map.get(source.api_identifier)
-        if extractor:
-            extracted_data = extractor(job_data)
-        else:
-            extracted_data = job_data
-        
-        if not extracted_data.get('external_id'):
-            extracted_data['external_id'] = hashlib.md5(
-                f"{extracted_data.get('title', '')}{extracted_data.get('company', '')}{source.api_identifier}".encode()
-            ).hexdigest()
-        
-        existing_job = Job.query.filter_by(
-            external_id=extracted_data['external_id'],
-            source_id=source.id
-        ).first()
-        
-        if existing_job:
-            return existing_job
-        
-        admin_user = User.query.filter_by(role='super_admin').first()
-        if not admin_user:
-            admin_user = User.query.filter_by(role='admin').first()
-        
-        if not admin_user:
-            logger.error("No admin user found to assign imported job")
-            return None
-        
-        location = extracted_data.get('location', '')
-        state = extracted_data.get('state', '')
-        if not state and location:
-            if any(city in location for city in INDIAN_STATES['telangana']):
-                state = 'Telangana'
-            elif any(city in location for city in INDIAN_STATES['andhra_pradesh']):
-                state = 'Andhra Pradesh'
-        
-        job = Job(
-            title=sanitize_html(extracted_data.get('title', 'Untitled Job'))[:200],
-            company=sanitize_html(extracted_data.get('company', 'Unknown Company'))[:150],
-            location=location,
-            state=state,
-            job_type=extracted_data.get('job_type', 'private'),
-            category=extracted_data.get('category', 'General'),
-            description=sanitize_html(extracted_data.get('description', '')),
-            requirements=sanitize_html(extracted_data.get('requirements', '')),
-            salary_range=extracted_data.get('salary_range', ''),
-            experience_level=extracted_data.get('experience_level', ''),
-            education_required=extracted_data.get('education_required', ''),
-            age_limit=extracted_data.get('age_limit', ''),
-            application_url=extracted_data.get('application_url', ''),
-            application_fee=extracted_data.get('application_fee', ''),
-            selection_process=extracted_data.get('selection_process', ''),
-            total_vacancies=extracted_data.get('total_vacancies', ''),
-            important_dates=extracted_data.get('important_dates', {}),
-            notification_pdf=extracted_data.get('notification_pdf', ''),
-            external_id=extracted_data['external_id'],
-            status='moderation',
-            author_id=admin_user.id,
-            source_id=source.id,
-            scraped_at=datetime.utcnow(),
-            language=extracted_data.get('language', 'english,hindi'),
-            remote_eligible=extracted_data.get('job_type') == 'remote'
-        )
-        
-        if extracted_data.get('application_deadline'):
-            try:
-                if isinstance(extracted_data['application_deadline'], str):
-                    job.application_deadline = date_parser.parse(extracted_data['application_deadline']).date()
-                else:
-                    job.application_deadline = extracted_data['application_deadline']
-            except (ValueError, TypeError):
-                pass
-        
-        if extracted_data.get('exam_date'):
-            try:
-                if isinstance(extracted_data['exam_date'], str):
-                    job.exam_date = date_parser.parse(extracted_data['exam_date']).date()
-            except (ValueError, TypeError):
-                pass
-        
-        if job.application_deadline and job.application_deadline <= datetime.now().date() + timedelta(days=7):
-            job.is_urgent = True
-        
-        job.extract_salary_range()
-        job.generate_tags()
-        
-        db.session.add(job)
-        db.session.commit()
-        
-        return job
-    
-    except Exception as e:
-        logger.error("Failed to process imported Indian job", error=str(e), source=source.name)
+
+
+def generate_token(user_id: str, role: str) -> str:
+    payload = {
+        'user_id': user_id,
+        'role': role,
+        'exp': datetime.utcnow() + timedelta(hours=app.config['JWT_EXPIRATION_HOURS']),
+        'iat': datetime.utcnow()
+    }
+    return jwt.encode(payload, app.config['JWT_SECRET_KEY'], algorithm='HS256')
+
+
+def decode_token(token: str) -> Optional[dict]:
+    try:
+        return jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
         return None
 
 
-async def sync_indian_job_sources():
-    with current_app.app_context():
-        sources = JobSource.query.filter_by(source_type='api', is_active=True).all()
-        
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            for source in sources:
-                if source.api_identifier in INDIAN_JOB_APIS:
-                    task = fetch_indian_jobs_from_api_async(source, session)
-                    tasks.append((source, task))
-            
-            for source, task in tasks:
-                try:
-                    jobs_data = await task
-                    processed_count = 0
-                    
-                    for job_data in jobs_data:
-                        job = process_imported_indian_job(job_data, source)
-                        if job:
-                            processed_count += 1
-                    
-                    logger.info("Synced Indian jobs from source", source=source.name, count=processed_count)
-                    
-                except Exception as e:
-                    logger.error("Failed to sync Indian jobs from source", source=source.name, error=str(e))
+def get_current_user():
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+        payload = decode_token(token)
+        if payload:
+            user = User.query.get(payload['user_id'])
+            if user and user.is_active:
+                return user
+    
+    user_id = session.get('user_id')
+    if user_id:
+        user = User.query.get(user_id)
+        if user and user.is_active:
+            return user
+    
+    return None
 
 
-def create_app():
-    app = Flask(__name__)
-    
-    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
-    app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', secrets.token_hex(32))
-    app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
-    app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(days=30)
-    
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'postgresql://localhost/sridhar_services_india')
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-        'pool_pre_ping': True,
-        'pool_recycle': 300,
-        'pool_size': 10,
-        'max_overflow': 20
-    }
-    
-    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
-    app.config['CELERY_BROKER_URL'] = redis_url + '/0'
-    app.config['CELERY_RESULT_BACKEND'] = redis_url + '/0'
-    app.config['CACHE_TYPE'] = 'RedisCache'
-    app.config['CACHE_REDIS_URL'] = redis_url + '/1'
-    app.config['RATELIMIT_STORAGE_URL'] = redis_url + '/2'
-    
-    app.config['CLOUDINARY_CLOUD_NAME'] = os.environ.get('CLOUDINARY_CLOUD_NAME')
-    app.config['CLOUDINARY_API_KEY'] = os.environ.get('CLOUDINARY_API_KEY')
-    app.config['CLOUDINARY_API_SECRET'] = os.environ.get('CLOUDINARY_API_SECRET')
-    
-    app.config['WTF_CSRF_TIME_LIMIT'] = 3600
-    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
-    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
-    
-    db.init_app(app)
-    migrate.init_app(app, db)
-    csrf.init_app(app)
-    limiter.init_app(app)
-    cache.init_app(app)
-    jwt_manager.init_app(app)
-    compress.init_app(app)
-    
-    CORS(app, origins=os.environ.get('ALLOWED_ORIGINS', '*').split(','))
-    
-    Talisman(app, force_https=os.environ.get('FORCE_HTTPS', 'False').lower() == 'true')
-    
-    init_cloudinary(app)
-    celery = create_celery(app)
-    
-    @celery.task(name='sync_indian_jobs')
-    def sync_indian_jobs_task():
-        asyncio.run(sync_indian_job_sources())
-    
-    @celery.task(name='sync_government_jobs')
-    def sync_government_jobs_task():
-        with app.app_context():
-            govt_sources = JobSource.query.filter(
-                JobSource.api_identifier.in_(['tspsc', 'appsc', 'upsc', 'ssc', 'railway_jobs'])
-            ).all()
-            
-            for source in govt_sources:
-                try:
-                    asyncio.run(fetch_indian_jobs_from_api_async(source, aiohttp.ClientSession()))
-                except Exception as e:
-                    logger.error("Failed to sync government jobs", source=source.name, error=str(e))
-    
-    @celery.task(name='cleanup_expired_jobs')
-    def cleanup_expired_jobs_task():
-        with app.app_context():
-            try:
-                expired_jobs = Job.query.filter(
-                    or_(
-                        and_(Job.application_deadline.isnot(None), Job.application_deadline < datetime.now().date()),
-                        and_(Job.expires_at.isnot(None), Job.expires_at < datetime.utcnow())
-                    ),
-                    Job.status == 'published'
-                ).all()
-                
-                for job in expired_jobs:
-                    job.status = 'expired'
-                
-                db.session.commit()
-                logger.info("Cleaned up expired jobs", count=len(expired_jobs))
-                
-            except Exception as e:
-                logger.error("Failed to cleanup expired jobs", error=str(e))
-    
-    @celery.task(name='update_urgent_jobs')
-    def update_urgent_jobs_task():
-        with app.app_context():
-            try:
-                urgent_deadline = datetime.now().date() + timedelta(days=7)
-                jobs_to_update = Job.query.filter(
-                    Job.application_deadline <= urgent_deadline,
-                    Job.application_deadline >= datetime.now().date(),
-                    Job.is_urgent == False,
-                    Job.status == 'published'
-                ).all()
-                
-                for job in jobs_to_update:
-                    job.is_urgent = True
-                
-                db.session.commit()
-                logger.info("Updated urgent jobs", count=len(jobs_to_update))
-                
-            except Exception as e:
-                logger.error("Failed to update urgent jobs", error=str(e))
-    
-    @app.before_first_request
-    def initialize_app():
-        db.create_all()
-        
-        if not User.query.filter_by(role='super_admin').first():
-            admin = User(
-                username='admin',
-                email='admin@sridharservices.com',
-                role='super_admin',
-                email_verified=True,
-                preferred_locations=['Hyderabad, Telangana', 'Vijayawada, Andhra Pradesh'],
-                language_preference='english'
-            )
-            admin.set_password(os.environ.get('ADMIN_PASSWORD', 'SecureAdmin123!'))
-            db.session.add(admin)
-            db.session.commit()
-            logger.info("Created default super admin user")
-        
-        indian_job_sources = [
-            ('sarkari_result', 'Sarkari Result', 'https://www.sarkariresult.com/api/latest-jobs'),
-            ('tspsc', 'TSPSC Jobs', 'https://www.tspsc.gov.in/api/notifications'),
-            ('appsc', 'APPSC Jobs', 'https://psc.ap.gov.in/api/notifications'),
-            ('freejobalert', 'Free Job Alert', 'https://www.freejobalert.com/api/jobs'),
-            ('government_jobs_india', 'Government Jobs India', 'https://www.governmentjobsindia.com/api/jobs'),
-            ('employment_news', 'Employment News', 'https://www.employmentnews.gov.in/api/notifications'),
-            ('upsc', 'UPSC Jobs', 'https://upsc.gov.in/api/examinations'),
-            ('ssc', 'SSC Jobs', 'https://ssc.nic.in/api/notifications'),
-            ('railway_jobs', 'Railway Recruitment', 'https://www.rrcb.gov.in/api/notifications'),
-            ('ibps', 'IBPS Jobs', 'https://www.ibps.in/api/notifications'),
-        ]
-        
-        for api_id, name, url in indian_job_sources:
-            if not JobSource.query.filter_by(api_identifier=api_id).first():
-                config = INDIAN_JOB_APIS.get(api_id, {})
-                source = JobSource(
-                    name=name,
-                    api_identifier=api_id,
-                    api_url=url,
-                    source_type='api',
-                    rate_limit_per_hour=getattr(config, 'rate_limit_per_hour', 100),
-                    target_states=['Telangana', 'Andhra Pradesh'],
-                    priority=1 if 'government' in name.lower() else 2
-                )
-                db.session.add(source)
-        
-        db.session.commit()
-        logger.info("Initialized Indian job sources")
-    
-    @app.before_request
-    def before_request():
-        if 'session_id' not in session:
-            session['session_id'] = str(uuid.uuid4())
-        
-        REQUEST_COUNT.labels(
-            method=request.method,
-            endpoint=request.endpoint or 'unknown',
-            status='in_progress'
-        ).inc()
-    
-    @app.after_request
-    def after_request(response):
-        REQUEST_COUNT.labels(
-            method=request.method,
-            endpoint=request.endpoint or 'unknown',
-            status=response.status_code
-        ).inc()
-        
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['X-Frame-Options'] = 'DENY'
-        response.headers['X-XSS-Protection'] = '1; mode=block'
-        
-        return response
-    
-    @app.teardown_appcontext
-    def shutdown_session(exception=None):
-        db.session.remove()
-    
-    @jwt_manager.token_in_blocklist_loader
-    def check_if_token_revoked(jwt_header, jwt_payload):
-        return jwt_payload['jti'] in blacklisted_tokens
-    
-    @app.errorhandler(400)
-    def bad_request(error):
-        return jsonify({'error': 'Bad request', 'message': str(error)}), 400
-    
-    @app.errorhandler(401)
-    def unauthorized(error):
-        return jsonify({'error': 'Unauthorized', 'message': 'Authentication required'}), 401
-    
-    @app.errorhandler(403)
-    def forbidden(error):
-        return jsonify({'error': 'Forbidden', 'message': 'Access denied'}), 403
-    
-    @app.errorhandler(404)
-    def not_found(error):
-        return jsonify({'error': 'Not found', 'message': 'Resource not found'}), 404
-    
-    @app.errorhandler(429)
-    def ratelimit_handler(e):
-        return jsonify({'error': 'Rate limit exceeded', 'message': 'Too many requests'}), 429
-    
-    @app.errorhandler(500)
-    def internal_error(error):
-        db.session.rollback()
-        logger.error("Internal server error", error=str(error))
-        return jsonify({'error': 'Internal server error', 'message': 'Something went wrong'}), 500
-    
-    @app.route('/api/v1/auth/login', methods=['POST'])
-    @limiter.limit("5 per minute")
-    @validate_json_request(UserSchema)
-    def login():
-        data = g.validated_data
-        
-        user = User.query.filter(
-            or_(User.username == data['username'], User.email == data['username'])
-        ).first()
-        
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = get_current_user()
         if not user:
-            AuditLog.log_action('login_failed', error_message='User not found')
-            return jsonify({'error': 'Invalid credentials'}), 401
+            return jsonify({'error': 'Authentication required'}), 401
+        return f(user, *args, **kwargs)
+    return decorated_function
+
+
+def super_admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'Authentication required'}), 401
+        if user.role != UserRole.SUPER_ADMIN:
+            return jsonify({'error': 'Super admin access required'}), 403
+        return f(user, *args, **kwargs)
+    return decorated_function
+
+
+def log_audit(user_id: str, action: str, entity_type: str, entity_id: str = None, changes: dict = None):
+    audit_log = AuditLog(
+        user_id=user_id,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        changes=changes or {},
+        ip_address=request.remote_addr,
+        user_agent=request.headers.get('User-Agent')
+    )
+    db.session.add(audit_log)
+    db.session.commit()
+
+
+def log_analytics(event_type: str, entity_type: str = None, entity_id: str = None, metadata: dict = None):
+    user = get_current_user()
+    event = AnalyticsEvent(
+        event_type=event_type,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        user_id=user.id if user else None,
+        session_id=session.get('session_id'),
+        ip_address=request.remote_addr,
+        user_agent=request.headers.get('User-Agent'),
+        referrer=request.headers.get('Referer'),
+        metadata=metadata or {}
+    )
+    db.session.add(event)
+    db.session.commit()
+
+
+@app.before_request
+def before_request():
+    if 'session_id' not in session:
+        session['session_id'] = str(uuid.uuid4())
+
+
+@app.route('/api/auth/register', methods=['POST'])
+@limiter.limit("5 per hour")
+@super_admin_required
+def register(current_user):
+    data = request.get_json()
+    
+    if not all(k in data for k in ['email', 'password', 'full_name', 'role']):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    if User.query.filter_by(email=data['email']).first():
+        return jsonify({'error': 'Email already exists'}), 400
+    
+    try:
+        role = UserRole(data['role'])
+    except ValueError:
+        return jsonify({'error': 'Invalid role'}), 400
+    
+    user = User(
+        email=data['email'],
+        full_name=data['full_name'],
+        role=role,
+        created_by_id=current_user.id
+    )
+    user.set_password(data['password'])
+    
+    db.session.add(user)
+    db.session.commit()
+    
+    log_audit(current_user.id, 'CREATE_USER', 'user', str(user.id), {'email': user.email, 'role': user.role.value})
+    
+    return jsonify({
+        'message': 'User created successfully',
+        'user': user.to_dict()
+    }), 201
+
+
+@app.route('/api/auth/login', methods=['POST'])
+@limiter.limit("10 per minute")
+def login():
+    data = request.get_json()
+    
+    if not all(k in data for k in ['email', 'password']):
+        return jsonify({'error': 'Missing email or password'}), 400
+    
+    user = User.query.filter_by(email=data['email']).first()
+    
+    if not user or not user.check_password(data['password']):
+        return jsonify({'error': 'Invalid credentials'}), 401
+    
+    if not user.is_active:
+        return jsonify({'error': 'Account is disabled'}), 403
+    
+    user.last_login = datetime.utcnow()
+    db.session.commit()
+    
+    session['user_id'] = str(user.id)
+    session['role'] = user.role.value
+    session.permanent = True
+    
+    token = generate_token(str(user.id), user.role.value)
+    
+    log_analytics('LOGIN', 'user', str(user.id))
+    
+    return jsonify({
+        'message': 'Login successful',
+        'token': token,
+        'user': user.to_dict()
+    }), 200
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+@login_required
+def logout(current_user):
+    log_analytics('LOGOUT', 'user', str(current_user.id))
+    session.clear()
+    return jsonify({'message': 'Logout successful'}), 200
+
+
+@app.route('/api/auth/me', methods=['GET'])
+@login_required
+def get_current_user_info(current_user):
+    return jsonify({'user': current_user.to_dict()}), 200
+
+
+@app.route('/api/users', methods=['GET'])
+@super_admin_required
+def list_users(current_user):
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    
+    query = User.query
+    
+    role = request.args.get('role')
+    if role:
+        query = query.filter_by(role=UserRole(role))
+    
+    is_active = request.args.get('is_active')
+    if is_active is not None:
+        query = query.filter_by(is_active=is_active.lower() == 'true')
+    
+    pagination = query.order_by(User.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    
+    return jsonify({
+        'users': [user.to_dict() for user in pagination.items],
+        'total': pagination.total,
+        'page': page,
+        'per_page': per_page,
+        'pages': pagination.pages
+    }), 200
+
+
+@app.route('/api/users/<user_id>', methods=['GET'])
+@super_admin_required
+def get_user(current_user, user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    return jsonify({'user': user.to_dict()}), 200
+
+
+@app.route('/api/users/<user_id>', methods=['PUT'])
+@super_admin_required
+def update_user(current_user, user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    data = request.get_json()
+    changes = {}
+    
+    if 'full_name' in data:
+        changes['full_name'] = {'old': user.full_name, 'new': data['full_name']}
+        user.full_name = data['full_name']
+    
+    if 'email' in data and data['email'] != user.email:
+        if User.query.filter_by(email=data['email']).first():
+            return jsonify({'error': 'Email already exists'}), 400
+        changes['email'] = {'old': user.email, 'new': data['email']}
+        user.email = data['email']
+    
+    if 'role' in data:
+        try:
+            new_role = UserRole(data['role'])
+            changes['role'] = {'old': user.role.value, 'new': new_role.value}
+            user.role = new_role
+        except ValueError:
+            return jsonify({'error': 'Invalid role'}), 400
+    
+    if 'is_active' in data:
+        changes['is_active'] = {'old': user.is_active, 'new': data['is_active']}
+        user.is_active = data['is_active']
+    
+    if 'password' in data:
+        user.set_password(data['password'])
+        changes['password'] = 'changed'
+    
+    db.session.commit()
+    log_audit(current_user.id, 'UPDATE_USER', 'user', user_id, changes)
+    
+    return jsonify({
+        'message': 'User updated successfully',
+        'user': user.to_dict()
+    }), 200
+
+
+@app.route('/api/users/<user_id>', methods=['DELETE'])
+@super_admin_required
+def delete_user(current_user, user_id):
+    if str(current_user.id) == user_id:
+        return jsonify({'error': 'Cannot delete your own account'}), 400
+    
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    db.session.delete(user)
+    db.session.commit()
+    
+    log_audit(current_user.id, 'DELETE_USER', 'user', user_id, {'email': user.email})
+    
+    return jsonify({'message': 'User deleted successfully'}), 200
+
+
+@app.route('/api/jobs', methods=['GET'])
+@limiter.limit("100 per minute")
+def list_jobs():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    
+    query = Job.query.filter_by(status=JobStatus.APPROVED)
+    
+    job_type = request.args.get('job_type')
+    if job_type:
+        try:
+            query = query.filter_by(job_type=JobType(job_type))
+        except ValueError:
+            pass
+    
+    search = request.args.get('search')
+    if search:
+        query = query.filter(
+            db.or_(
+                Job.title.ilike(f'%{search}%'),
+                Job.company.ilike(f'%{search}%'),
+                Job.description.ilike(f'%{search}%')
+            )
+        )
+    
+    location = request.args.get('location')
+    if location:
+        query = query.filter(Job.location.ilike(f'%{location}%'))
+    
+    is_featured = request.args.get('is_featured')
+    if is_featured:
+        query = query.filter_by(is_featured=is_featured.lower() == 'true')
+    
+    pagination = query.order_by(
+        Job.is_featured.desc(),
+        Job.published_at.desc()
+    ).paginate(page=page, per_page=per_page, error_out=False)
+    
+    log_analytics('LIST_JOBS', metadata={'page': page, 'search': search, 'job_type': job_type})
+    
+    return jsonify({
+        'jobs': [job.to_dict() for job in pagination.items],
+        'total': pagination.total,
+        'page': page,
+        'per_page': per_page,
+        'pages': pagination.pages
+    }), 200
+
+
+@app.route('/api/jobs/<job_id>', methods=['GET'])
+@limiter.limit("200 per minute")
+def get_job(job_id):
+    job = Job.query.get(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    
+    if job.status != JobStatus.APPROVED:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'Job not found'}), 404
+    
+    job.view_count += 1
+    db.session.commit()
+    
+    log_analytics('VIEW_JOB', 'job', job_id)
+    
+    return jsonify({'job': job.to_dict(include_analytics=True)}), 200
+
+
+@app.route('/api/jobs', methods=['POST'])
+@login_required
+@limiter.limit("30 per hour")
+def create_job(current_user):
+    data = request.get_json()
+    
+    required_fields = ['title', 'description', 'company', 'job_type']
+    if not all(k in data for k in required_fields):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    try:
+        job_type = JobType(data['job_type'])
+    except ValueError:
+        return jsonify({'error': 'Invalid job type'}), 400
+    
+    status = JobStatus.APPROVED if current_user.role == UserRole.SUPER_ADMIN else JobStatus.PENDING
+    
+    job = Job(
+        title=data['title'],
+        description=data['description'],
+        company=data['company'],
+        location=data.get('location'),
+        job_type=job_type,
+        status=status,
+        salary_min=data.get('salary_min'),
+        salary_max=data.get('salary_max'),
+        application_url=data.get('application_url'),
+        application_deadline=datetime.fromisoformat(data['application_deadline']) if data.get('application_deadline') else None,
+        qualifications=data.get('qualifications', []),
+        tags=data.get('tags', []),
+        poster_url=data.get('poster_url'),
+        is_featured=data.get('is_featured', False) if current_user.role == UserRole.SUPER_ADMIN else False,
+        created_by_id=current_user.id,
+        published_at=datetime.utcnow() if status == JobStatus.APPROVED else None
+    )
+    
+    db.session.add(job)
+    db.session.commit()
+    
+    log_audit(current_user.id, 'CREATE_JOB', 'job', str(job.id), {'title': job.title, 'status': status.value})
+    log_analytics('CREATE_JOB', 'job', str(job.id))
+    
+    return jsonify({
+        'message': 'Job created successfully',
+        'job': job.to_dict()
+    }), 201
+
+
+@app.route('/api/jobs/<job_id>', methods=['PUT'])
+@login_required
+@limiter.limit("30 per hour")
+def update_job(current_user, job_id):
+    job = Job.query.get(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    
+    if job.created_by_id != current_user.id and current_user.role != UserRole.SUPER_ADMIN:
+        return jsonify({'error': 'Permission denied'}), 403
+    
+    data = request.get_json()
+    changes = {}
+    
+    updatable_fields = [
+        'title', 'description', 'company', 'location', 'salary_min', 'salary_max',
+        'application_url', 'application_deadline', 'qualifications', 'tags', 'poster_url'
+    ]
+    
+    for field in updatable_fields:
+        if field in data:
+            old_value = getattr(job, field)
+            new_value = data[field]
+            if field == 'application_deadline' and new_value:
+                new_value = datetime.fromisoformat(new_value).date()
+            if old_value != new_value:
+                changes[field] = {'old': str(old_value), 'new': str(new_value)}
+                setattr(job, field, new_value)
+    
+    if 'job_type' in data:
+        try:
+            new_type = JobType(data['job_type'])
+            if job.job_type != new_type:
+                changes['job_type'] = {'old': job.job_type.value, 'new': new_type.value}
+                job.job_type = new_type
+        except ValueError:
+            return jsonify({'error': 'Invalid job type'}), 400
+    
+    if current_user.role == UserRole.SUPER_ADMIN:
+        if 'status' in data:
+            try:
+                new_status = JobStatus(data['status'])
+                if job.status != new_status:
+                    changes['status'] = {'old': job.status.value, 'new': new_status.value}
+                    job.status = new_status
+                    if new_status == JobStatus.APPROVED and not job.published_at:
+                        job.published_at = datetime.utcnow()
+            except ValueError:
+                return jsonify({'error': 'Invalid status'}), 400
         
-        if user.is_locked():
-            AuditLog.log_action('login_failed', error_message='Account locked')
-            return jsonify({'error': 'Account is temporarily locked'}), 401
+        if 'is_featured' in data:
+            if job.is_featured != data['is_featured']:
+                changes['is_featured'] = {'old': job.is_featured, 'new': data['is_featured']}
+                job.is_featured = data['is_featured']
+    
+    db.session.commit()
+    log_audit(current_user.id, 'UPDATE_JOB', 'job', job_id, changes)
+    
+    return jsonify({
+        'message': 'Job updated successfully',
+        'job': job.to_dict()
+    }), 200
+
+
+@app.route('/api/jobs/<job_id>', methods=['DELETE'])
+@login_required
+def delete_job(current_user, job_id):
+    job = Job.query.get(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    
+    if job.created_by_id != current_user.id and current_user.role != UserRole.SUPER_ADMIN:
+        return jsonify({'error': 'Permission denied'}), 403
+    
+    db.session.delete(job)
+    db.session.commit()
+    
+    log_audit(current_user.id, 'DELETE_JOB', 'job', job_id, {'title': job.title})
+    
+    return jsonify({'message': 'Job deleted successfully'}), 200
+
+
+@app.route('/api/jobs/<job_id>/apply', methods=['POST'])
+@limiter.limit("50 per hour")
+def track_job_apply(job_id):
+    job = Job.query.get(job_id)
+    if not job or job.status != JobStatus.APPROVED:
+        return jsonify({'error': 'Job not found'}), 404
+    
+    job.apply_count += 1
+    db.session.commit()
+    
+    log_analytics('APPLY_JOB', 'job', job_id)
+    
+    return jsonify({'message': 'Application tracked'}), 200
+
+
+@app.route('/api/jobs/pending', methods=['GET'])
+@super_admin_required
+def list_pending_jobs(current_user):
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    
+    pagination = Job.query.filter_by(status=JobStatus.PENDING).order_by(
+        Job.created_at.desc()
+    ).paginate(page=page, per_page=per_page, error_out=False)
+    
+    return jsonify({
+        'jobs': [job.to_dict() for job in pagination.items],
+        'total': pagination.total,
+        'page': page,
+        'per_page': per_page,
+        'pages': pagination.pages
+    }), 200
+
+
+@app.route('/api/jobs/<job_id>/moderate', methods=['POST'])
+@super_admin_required
+def moderate_job(current_user, job_id):
+    job = Job.query.get(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    
+    data = request.get_json()
+    action = data.get('action')
+    
+    if action not in ['approve', 'reject']:
+        return jsonify({'error': 'Invalid action'}), 400
+    
+    old_status = job.status
+    
+    if action == 'approve':
+        job.status = JobStatus.APPROVED
+        job.published_at = datetime.utcnow()
+    else:
+        job.status = JobStatus.REJECTED
+    
+    db.session.commit()
+    
+    log_audit(
+        current_user.id,
+        'MODERATE_JOB',
+        'job',
+        job_id,
+        {'action': action, 'old_status': old_status.value, 'new_status': job.status.value}
+    )
+    
+    return jsonify({
+        'message': f'Job {action}d successfully',
+        'job': job.to_dict()
+    }), 200
+
+
+@app.route('/api/services', methods=['GET'])
+@limiter.limit("100 per minute")
+def list_services():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    
+    query = Service.query.filter_by(status=ServiceStatus.ACTIVE)
+    
+    category = request.args.get('category')
+    if category:
+        query = query.filter_by(category=category)
+    
+    search = request.args.get('search')
+    if search:
+        query = query.filter(
+            db.or_(
+                Service.title.ilike(f'%{search}%'),
+                Service.description.ilike(f'%{search}%')
+            )
+        )
+    
+    pagination = query.order_by(
+        Service.display_order.asc(),
+        Service.created_at.desc()
+    ).paginate(page=page, per_page=per_page, error_out=False)
+    
+    log_analytics('LIST_SERVICES', metadata={'page': page, 'category': category})
+    
+    return jsonify({
+        'services': [service.to_dict() for service in pagination.items],
+        'total': pagination.total,
+        'page': page,
+        'per_page': per_page,
+        'pages': pagination.pages
+    }), 200
+
+
+@app.route('/api/services/<service_id>', methods=['GET'])
+@limiter.limit("200 per minute")
+def get_service(service_id):
+    service = Service.query.get(service_id)
+    if not service:
+        return jsonify({'error': 'Service not found'}), 404
+    
+    if service.status != ServiceStatus.ACTIVE:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'Service not found'}), 404
+    
+    service.view_count += 1
+    db.session.commit()
+    
+    log_analytics('VIEW_SERVICE', 'service', service_id)
+    
+    return jsonify({'service': service.to_dict(include_analytics=True)}), 200
+
+
+@app.route('/api/services', methods=['POST'])
+@login_required
+@limiter.limit("30 per hour")
+def create_service(current_user):
+    data = request.get_json()
+    
+    required_fields = ['title', 'description', 'category']
+    if not all(k in data for k in required_fields):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    service = Service(
+        title=data['title'],
+        description=data['description'],
+        category=data['category'],
+        icon_url=data.get('icon_url'),
+        contact_person=data.get('contact_person'),
+        contact_phone=data.get('contact_phone'),
+        contact_email=data.get('contact_email'),
+        contact_address=data.get('contact_address'),
+        whatsapp_number=data.get('whatsapp_number'),
+        pricing_info=data.get('pricing_info'),
+        features=data.get('features', []),
+        status=ServiceStatus.ACTIVE,
+        display_order=data.get('display_order', 0),
+        created_by_id=current_user.id
+    )
+    
+    db.session.add(service)
+    db.session.commit()
+    
+    log_audit(current_user.id, 'CREATE_SERVICE', 'service', str(service.id), {'title': service.title})
+    log_analytics('CREATE_SERVICE', 'service', str(service.id))
+    
+    return jsonify({
+        'message': 'Service created successfully',
+        'service': service.to_dict()
+    }), 201
+
+
+@app.route('/api/services/<service_id>', methods=['PUT'])
+@login_required
+@limiter.limit("30 per hour")
+def update_service(current_user, service_id):
+    service = Service.query.get(service_id)
+    if not service:
+        return jsonify({'error': 'Service not found'}), 404
+    
+    if service.created_by_id != current_user.id and current_user.role != UserRole.SUPER_ADMIN:
+        return jsonify({'error': 'Permission denied'}), 403
+    
+    data = request.get_json()
+    changes = {}
+    
+    updatable_fields = [
+        'title', 'description', 'category', 'icon_url', 'contact_person',
+        'contact_phone', 'contact_email', 'contact_address', 'whatsapp_number',
+        'pricing_info', 'features', 'display_order'
+    ]
+    
+    for field in updatable_fields:
+        if field in data:
+            old_value = getattr(service, field)
+            new_value = data[field]
+            if old_value != new_value:
+                changes[field] = {'old': str(old_value), 'new': str(new_value)}
+                setattr(service, field, new_value)
+    
+    if 'status' in data and current_user.role == UserRole.SUPER_ADMIN:
+        try:
+            new_status = ServiceStatus(data['status'])
+            if service.status != new_status:
+                changes['status'] = {'old': service.status.value, 'new': new_status.value}
+                service.status = new_status
+        except ValueError:
+            return jsonify({'error': 'Invalid status'}), 400
+    
+    db.session.commit()
+    log_audit(current_user.id, 'UPDATE_SERVICE', 'service', service_id, changes)
+    
+    return jsonify({
+        'message': 'Service updated successfully',
+        'service': service.to_dict()
+    }), 200
+
+
+@app.route('/api/services/<service_id>', methods=['DELETE'])
+@login_required
+def delete_service(current_user, service_id):
+    service = Service.query.get(service_id)
+    if not service:
+        return jsonify({'error': 'Service not found'}), 404
+    
+    if service.created_by_id != current_user.id and current_user.role != UserRole.SUPER_ADMIN:
+        return jsonify({'error': 'Permission denied'}), 403
+    
+    db.session.delete(service)
+    db.session.commit()
+    
+    log_audit(current_user.id, 'DELETE_SERVICE', 'service', service_id, {'title': service.title})
+    
+    return jsonify({'message': 'Service deleted successfully'}), 200
+
+
+@app.route('/api/services/<service_id>/inquiry', methods=['POST'])
+@limiter.limit("50 per hour")
+def track_service_inquiry(service_id):
+    service = Service.query.get(service_id)
+    if not service or service.status != ServiceStatus.ACTIVE:
+        return jsonify({'error': 'Service not found'}), 404
+    
+    service.inquiry_count += 1
+    db.session.commit()
+    
+    log_analytics('INQUIRY_SERVICE', 'service', service_id)
+    
+    return jsonify({'message': 'Inquiry tracked'}), 200
+
+
+@app.route('/api/upload', methods=['POST'])
+@login_required
+@limiter.limit("20 per hour")
+def upload_file(current_user):
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+    if '.' not in file.filename or file.filename.rsplit('.', 1)[1].lower() not in allowed_extensions:
+        return jsonify({'error': 'Invalid file type'}), 400
+    
+    folder = request.form.get('folder', 'sridhar_services')
+    
+    try:
+        result = cloudinary.uploader.upload(
+            file,
+            folder=folder,
+            transformation=[
+                {'width': 1200, 'height': 630, 'crop': 'limit'},
+                {'quality': 'auto'},
+                {'fetch_format': 'auto'}
+            ]
+        )
         
-        if not user.check_password(data['password']):
-            user.login_attempts += 1
-            if user.login_attempts >= 5:
-                user.lock_account()
-            db.session.commit()
+        log_audit(
+            current_user.id,
+            'UPLOAD_FILE',
+            'file',
+            result['public_id'],
+            {'url': result['secure_url']}
+        )
+        
+        return jsonify({
+            'message': 'File uploaded successfully',
+            'url': result['secure_url'],
+            'public_id': result['public_id'],
+            'width': result['width'],
+            'height': result['height']
+        }), 200
+    except Exception as e:
+        return jsonify({'error': f'Upload failed: {str(e)}'}), 500
+
+
+@app.route('/api/ads', methods=['GET'])
+@super_admin_required
+def list_ads(current_user):
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    
+    query = Ad.query
+    
+    status = request.args.get('status')
+    if status:
+        try:
+            query = query.filter_by(status=AdStatus(status))
+        except ValueError:
+            pass
+    
+    pagination = query.order_by(Ad.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    
+    return jsonify({
+        'ads': [ad.to_dict(include_analytics=True) for ad in pagination.items],
+        'total': pagination.total,
+        'page': page,
+        'per_page': per_page,
+        'pages': pagination.pages
+    }), 200
+
+
+@app.route('/api/ads/active', methods=['GET'])
+@limiter.limit("100 per minute")
+def list_active_ads():
+    placement = request.args.get('placement')
+    
+    query = Ad.query.filter_by(status=AdStatus.ACTIVE)
+    if placement:
+        query = query.filter_by(placement=placement)
+    
+    ads = query.all()
+    
+    return jsonify({
+        'ads': [ad.to_dict() for ad in ads]
+    }), 200
+
+
+@app.route('/api/ads', methods=['POST'])
+@super_admin_required
+@limiter.limit("30 per hour")
+def create_ad(current_user):
+    data = request.get_json()
+    
+    required_fields = ['name', 'ad_unit_id', 'placement']
+    if not all(k in data for k in required_fields):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    ad = Ad(
+        name=data['name'],
+        ad_unit_id=data['ad_unit_id'],
+        placement=data['placement'],
+        status=AdStatus.ACTIVE,
+        config=data.get('config', {})
+    )
+    
+    db.session.add(ad)
+    db.session.commit()
+    
+    log_audit(current_user.id, 'CREATE_AD', 'ad', str(ad.id), {'name': ad.name, 'placement': ad.placement})
+    
+    return jsonify({
+        'message': 'Ad created successfully',
+        'ad': ad.to_dict()
+    }), 201
+
+
+@app.route('/api/ads/<ad_id>', methods=['PUT'])
+@super_admin_required
+def update_ad(current_user, ad_id):
+    ad = Ad.query.get(ad_id)
+    if not ad:
+        return jsonify({'error': 'Ad not found'}), 404
+    
+    data = request.get_json()
+    changes = {}
+    
+    for field in ['name', 'ad_unit_id', 'placement', 'config']:
+        if field in data:
+            old_value = getattr(ad, field)
+            if old_value != data[field]:
+                changes[field] = {'old': str(old_value), 'new': str(data[field])}
+                setattr(ad, field, data[field])
+    
+    if 'status' in data:
+        try:
+            new_status = AdStatus(data['status'])
+            if ad.status != new_status:
+                changes['status'] = {'old': ad.status.value, 'new': new_status.value}
+                ad.status = new_status
+        except ValueError:
+            return jsonify({'error': 'Invalid status'}), 400
+    
+    db.session.commit()
+    log_audit(current_user.id, 'UPDATE_AD', 'ad', ad_id, changes)
+    
+    return jsonify({
+        'message': 'Ad updated successfully',
+        'ad': ad.to_dict()
+    }), 200
+
+
+@app.route('/api/ads/<ad_id>', methods=['DELETE'])
+@super_admin_required
+def delete_ad(current_user, ad_id):
+    ad = Ad.query.get(ad_id)
+    if not ad:
+        return jsonify({'error': 'Ad not found'}), 404
+    
+    db.session.delete(ad)
+    db.session.commit()
+    
+    log_audit(current_user.id, 'DELETE_AD', 'ad', ad_id, {'name': ad.name})
+    
+    return jsonify({'message': 'Ad deleted successfully'}), 200
+
+
+@app.route('/api/ads/<ad_id>/track', methods=['POST'])
+@limiter.limit("1000 per minute")
+def track_ad_event(ad_id):
+    ad = Ad.query.get(ad_id)
+    if not ad:
+        return jsonify({'error': 'Ad not found'}), 404
+    
+    data = request.get_json()
+    event_type = data.get('event_type')
+    
+    if event_type == 'impression':
+        ad.impression_count += 1
+        log_analytics('AD_IMPRESSION', 'ad', ad_id)
+    elif event_type == 'click':
+        ad.click_count += 1
+        log_analytics('AD_CLICK', 'ad', ad_id)
+    else:
+        return jsonify({'error': 'Invalid event type'}), 400
+    
+    db.session.commit()
+    
+    return jsonify({'message': 'Event tracked'}), 200
+
+
+@app.route('/api/job-sources', methods=['GET'])
+@super_admin_required
+def list_job_sources(current_user):
+    sources = JobSource.query.order_by(JobSource.name).all()
+    return jsonify({
+        'sources': [source.to_dict() for source in sources]
+    }), 200
+
+
+@app.route('/api/job-sources', methods=['POST'])
+@super_admin_required
+def create_job_source(current_user):
+    data = request.get_json()
+    
+    required_fields = ['name', 'source_type']
+    if not all(k in data for k in required_fields):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    source = JobSource(
+        name=data['name'],
+        source_type=data['source_type'],
+        api_url=data.get('api_url'),
+        api_key=data.get('api_key'),
+        config=data.get('config', {}),
+        sync_frequency_minutes=data.get('sync_frequency_minutes', 60)
+    )
+    
+    db.session.add(source)
+    db.session.commit()
+    
+    log_audit(current_user.id, 'CREATE_JOB_SOURCE', 'job_source', str(source.id), {'name': source.name})
+    
+    return jsonify({
+        'message': 'Job source created successfully',
+        'source': source.to_dict()
+    }), 201
+
+
+@app.route('/api/job-sources/<source_id>', methods=['PUT'])
+@super_admin_required
+def update_job_source(current_user, source_id):
+    source = JobSource.query.get(source_id)
+    if not source:
+        return jsonify({'error': 'Job source not found'}), 404
+    
+    data = request.get_json()
+    changes = {}
+    
+    updatable_fields = ['name', 'source_type', 'api_url', 'api_key', 'config', 'is_active', 'sync_frequency_minutes']
+    
+    for field in updatable_fields:
+        if field in data:
+            old_value = getattr(source, field)
+            if old_value != data[field]:
+                changes[field] = {'old': str(old_value), 'new': str(data[field])}
+                setattr(source, field, data[field])
+    
+    db.session.commit()
+    log_audit(current_user.id, 'UPDATE_JOB_SOURCE', 'job_source', source_id, changes)
+    
+    return jsonify({
+        'message': 'Job source updated successfully',
+        'source': source.to_dict()
+    }), 200
+
+
+@app.route('/api/job-sources/<source_id>/sync', methods=['POST'])
+@super_admin_required
+def sync_job_source(current_user, source_id):
+    source = JobSource.query.get(source_id)
+    if not source:
+        return jsonify({'error': 'Job source not found'}), 404
+    
+    try:
+        sync_jobs_from_source(source)
+        return jsonify({'message': 'Sync completed successfully'}), 200
+    except Exception as e:
+        return jsonify({'error': f'Sync failed: {str(e)}'}), 500
+
+
+@app.route('/api/analytics/dashboard', methods=['GET'])
+@super_admin_required
+def get_analytics_dashboard(current_user):
+    days = request.args.get('days', 30, type=int)
+    start_date = datetime.utcnow() - timedelta(days=days)
+    
+    total_jobs = Job.query.filter_by(status=JobStatus.APPROVED).count()
+    total_services = Service.query.filter_by(status=ServiceStatus.ACTIVE).count()
+    total_users = User.query.filter_by(is_active=True).count()
+    
+    pending_jobs = Job.query.filter_by(status=JobStatus.PENDING).count()
+    
+    job_views = db.session.query(func.sum(Job.view_count)).scalar() or 0
+    service_views = db.session.query(func.sum(Service.view_count)).scalar() or 0
+    
+    visitors = AnalyticsEvent.query.filter(
+        AnalyticsEvent.created_at >= start_date
+    ).distinct(AnalyticsEvent.session_id).count()
+    
+    page_views = AnalyticsEvent.query.filter(
+        AnalyticsEvent.created_at >= start_date,
+        AnalyticsEvent.event_type.in_(['VIEW_JOB', 'VIEW_SERVICE', 'LIST_JOBS', 'LIST_SERVICES'])
+    ).count()
+    
+    ad_impressions = db.session.query(func.sum(Ad.impression_count)).scalar() or 0
+    ad_clicks = db.session.query(func.sum(Ad.click_count)).scalar() or 0
+    
+    top_jobs = db.session.query(
+        Job.id, Job.title, Job.view_count, Job.apply_count
+    ).filter_by(status=JobStatus.APPROVED).order_by(
+        Job.view_count.desc()
+    ).limit(10).all()
+    
+    top_services = db.session.query(
+        Service.id, Service.title, Service.view_count, Service.inquiry_count
+    ).filter_by(status=ServiceStatus.ACTIVE).order_by(
+        Service.view_count.desc()
+    ).limit(10).all()
+    
+    return jsonify({
+        'summary': {
+            'total_jobs': total_jobs,
+            'total_services': total_services,
+            'total_users': total_users,
+            'pending_jobs': pending_jobs,
+            'job_views': job_views,
+            'service_views': service_views,
+            'visitors': visitors,
+            'page_views': page_views,
+            'ad_impressions': ad_impressions,
+            'ad_clicks': ad_clicks,
+        },
+        'top_jobs': [
+            {
+                'id': str(job[0]),
+                'title': job[1],
+                'views': job[2],
+                'applies': job[3]
+            }
+            for job in top_jobs
+        ],
+        'top_services': [
+            {
+                'id': str(service[0]),
+                'title': service[1],
+                'views': service[2],
+                'inquiries': service[3]
+            }
+            for service in top_services
+        ]
+    }), 200
+
+
+@app.route('/api/analytics/events', methods=['GET'])
+@super_admin_required
+def get_analytics_events(current_user):
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    
+    query = AnalyticsEvent.query
+    
+    event_type = request.args.get('event_type')
+    if event_type:
+        query = query.filter_by(event_type=event_type)
+    
+    entity_type = request.args.get('entity_type')
+    if entity_type:
+        query = query.filter_by(entity_type=entity_type)
+    
+    start_date = request.args.get('start_date')
+    if start_date:
+        query = query.filter(AnalyticsEvent.created_at >= datetime.fromisoformat(start_date))
+    
+    pagination = query.order_by(AnalyticsEvent.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    
+    return jsonify({
+        'events': [event.to_dict() for event in pagination.items],
+        'total': pagination.total,
+        'page': page,
+        'per_page': per_page,
+        'pages': pagination.pages
+    }), 200
+
+
+@app.route('/api/audit-logs', methods=['GET'])
+@super_admin_required
+def get_audit_logs(current_user):
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    
+    query = AuditLog.query
+    
+    user_id = request.args.get('user_id')
+    if user_id:
+        query = query.filter_by(user_id=user_id)
+    
+    action = request.args.get('action')
+    if action:
+        query = query.filter_by(action=action)
+    
+    entity_type = request.args.get('entity_type')
+    if entity_type:
+        query = query.filter_by(entity_type=entity_type)
+    
+    start_date = request.args.get('start_date')
+    if start_date:
+        query = query.filter(AuditLog.created_at >= datetime.fromisoformat(start_date))
+    
+    pagination = query.order_by(AuditLog.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    
+    return jsonify({
+        'logs': [log.to_dict() for log in pagination.items],
+        'total': pagination.total,
+        'page': page,
+        'per_page': per_page,
+        'pages': pagination.pages
+    }), 200
+
+
+@app.route('/api/settings', methods=['GET'])
+@super_admin_required
+def get_settings(current_user):
+    settings = SiteSettings.query.all()
+    return jsonify({
+        'settings': {s.key: s.value for s in settings}
+    }), 200
+
+
+@app.route('/api/settings/<key>', methods=['GET'])
+@limiter.limit("100 per minute")
+def get_setting(key):
+    setting = SiteSettings.query.filter_by(key=key).first()
+    if not setting:
+        return jsonify({'error': 'Setting not found'}), 404
+    return jsonify({'setting': setting.to_dict()}), 200
+
+
+@app.route('/api/settings', methods=['POST'])
+@super_admin_required
+def update_setting(current_user):
+    data = request.get_json()
+    
+    if 'key' not in data or 'value' not in data:
+        return jsonify({'error': 'Missing key or value'}), 400
+    
+    setting = SiteSettings.query.filter_by(key=data['key']).first()
+    
+    if setting:
+        old_value = setting.value
+        setting.value = data['value']
+        if 'description' in data:
+            setting.description = data['description']
+        action = 'UPDATE_SETTING'
+    else:
+        setting = SiteSettings(
+            key=data['key'],
+            value=data['value'],
+            description=data.get('description')
+        )
+        db.session.add(setting)
+        old_value = None
+        action = 'CREATE_SETTING'
+    
+    db.session.commit()
+    
+    log_audit(
+        current_user.id,
+        action,
+        'setting',
+        str(setting.id),
+        {'key': data['key'], 'old_value': old_value, 'new_value': data['value']}
+    )
+    
+    return jsonify({
+        'message': 'Setting updated successfully',
+        'setting': setting.to_dict()
+    }), 200
+
+
+def sync_jobs_from_source(source: JobSource):
+    if not source.is_active or not source.api_url:
+        return
+    
+    try:
+        headers = {}
+        if source.api_key:
+            headers['Authorization'] = f'Bearer {source.api_key}'
+        
+        response = requests.get(source.api_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        jobs_data = response.json()
+        
+        if not isinstance(jobs_data, list):
+            jobs_data = jobs_data.get('jobs', [])
+        
+        imported_count = 0
+        
+        for job_data in jobs_data:
+            external_id = job_data.get('id') or job_data.get('external_id')
             
-            AuditLog.log_action('login_failed', error_message='Invalid password')
-            return jsonify({'error': 'Invalid credentials'}), 401
+            if external_id:
+                existing_job = Job.query.filter_by(
+                    source_id=source.id,
+                    external_id=str(external_id)
+                ).first()
+                
+                if existing_job:
+                    continue
+            
+            try:
+                job_type = JobType.GOVERNMENT
+                if 'private' in job_data.get('type', '').lower():
+                    job_type = JobType.PRIVATE
+                elif 'remote' in job_data.get('type', '').lower():
+                    job_type = JobType.REMOTE
+            except:
+                job_type = JobType.GOVERNMENT
+            
+            job = Job(
+                title=job_data.get('title', 'Untitled Job'),
+                description=job_data.get('description', ''),
+                company=job_data.get('company', 'Unknown'),
+                location=job_data.get('location'),
+                job_type=job_type,
+                status=JobStatus.PENDING,
+                salary_min=job_data.get('salary_min'),
+                salary_max=job_data.get('salary_max'),
+                application_url=job_data.get('application_url'),
+                application_deadline=datetime.fromisoformat(job_data['deadline']) if job_data.get('deadline') else None,
+                qualifications=job_data.get('qualifications', []),
+                tags=job_data.get('tags', []),
+                source_id=source.id,
+                external_id=str(external_id) if external_id else None
+            )
+            
+            db.session.add(job)
+            imported_count += 1
         
-        if not user.is_active:
-            AuditLog.log_action('login_failed', error_message='Account inactive')
-            return jsonify({'error': 'Account is deactivated'}), 401
-        
-        user.reset_login_attempts()
-        user.last_login = datetime.utcnow()
+        source.last_sync = datetime.utcnow()
         db.session.commit()
         
-        access_token = create_access_token(identity=str(user.id))
-        refresh_token = create_refresh_token(identity=str(user.id))
+        print(f"Imported {imported_count} jobs from {source.name}")
         
-        AuditLog.log_action('login_success', new_values={'user_id': str(user.id)})
+    except Exception as e:
+        print(f"Error syncing jobs from {source.name}: {str(e)}")
+        db.session.rollback()
+
+
+def scheduled_job_sync():
+    with app.app_context():
+        sources = JobSource.query.filter_by(is_active=True).all()
         
-        return jsonify({
-            'message': 'Login successful',
-            'access_token': access_token,
-            'refresh_token': refresh_token,
-            'user': user.to_dict(include_sensitive=True)
-        })
+        for source in sources:
+            if not source.last_sync or \
+               (datetime.utcnow() - source.last_sync).total_seconds() >= source.sync_frequency_minutes * 60:
+                sync_jobs_from_source(source)
+
+
+def scheduled_job_expiry_check():
+    with app.app_context():
+        expired_jobs = Job.query.filter(
+            Job.status == JobStatus.APPROVED,
+            Job.application_deadline < datetime.utcnow().date()
+        ).all()
+        
+        for job in expired_jobs:
+            job.status = JobStatus.EXPIRED
+        
+        if expired_jobs:
+            db.session.commit()
+            print(f"Marked {len(expired_jobs)} jobs as expired")
+
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(
+    scheduled_job_sync,
+    CronTrigger(minute='*/30'),
+    id='job_sync',
+    replace_existing=True
+)
+scheduler.add_job(
+    scheduled_job_expiry_check,
+    CronTrigger(hour='0', minute='0'),
+    id='job_expiry_check',
+    replace_existing=True
+)
+
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    try:
+        db.session.execute(text('SELECT 1'))
+        db_status = 'healthy'
+    except Exception as e:
+        db_status = f'unhealthy: {str(e)}'
     
-    @app.route('/api/v1/jobs', methods=['GET'])
-    @cache.cached(timeout=300, query_string=True)
-    def get_jobs():
-        page = request.args.get('page', 1, type=int)
-        per_page = min(request.args.get('per_page', 20, type=int), 100)
-        job_type = request.args.get('type')
-        category = request.args.get('category')
-        search = request.args.get('search', '').strip()
-        location = request.args.get('location')
-        state = request.args.get('state')
-        remote_only = request.args.get('remote_only', type=bool)
-        government_only = request.args.get('government_only', type=bool)
-        urgent_only = request.args.get('urgent_only', type=bool)
-        salary_min = request.args.get('salary_min', type=int)
-        salary_max = request.args.get('salary_max', type=int)
-        sort_by = request.args.get('sort', 'created_at')
-        order = request.args.get('order', 'desc')
-        language = request.args.get('language', 'all')
-        
-        query = Job.query.filter_by(status='published')
-        
-        if job_type:
-            query = query.filter_by(job_type=job_type)
-        if category:
-            query = query.filter_by(category=category)
-        if location:
-            query = query.filter(Job.location.ilike(f'%{location}%'))
-        if state:
-            query = query.filter_by(state=state)
-        if remote_only:
-            query = query.filter_by(remote_eligible=True)
-        if government_only:
-            query = query.filter_by(job_type='government')
-        if urgent_only:
-            query = query.filter_by(is_urgent=True)
-        if salary_min:
-            query = query.filter(Job.salary_min >= salary_min)
-        if salary_max:
-            query = query.filter(Job.salary_max <= salary_max)
-        if language != 'all':
-            query = query.filter(Job.language.like(f'%{language}%'))
-        
-        if search:
-            if len(search) > 2:
-                query = query.filter(
-                    Job.search_vector.match(search)
-                )
-            else:
-                query = query.filter(
-                    or_(
-                        Job.title.ilike(f'%{search}%'),
-                        Job.company.ilike(f'%{search}%'),
-                        Job.description.ilike(f'%{search}%')
-                    )
-                )
-            
-            AnalyticsEvent.log_event('search', metadata={'query': search, 'results_page': 'jobs'})
-        
-        if sort_by == 'salary':
-            sort_column = Job.salary_max
-        elif sort_by == 'company':
-            sort_column = Job.company
-        elif sort_by == 'views':
-            sort_column = Job.view_count
-        elif sort_by == 'deadline':
-            sort_column = Job.application_deadline
-        else:
-            sort_column = Job.created_at
-        
-        if order == 'asc':
-            query = query.order_by(asc(sort_column))
-        else:
-            query = query.order_by(desc(sort_column))
-        
-        query = query.order_by(desc(Job.is_featured), desc(Job.is_urgent), desc(Job.created_at))
-        
-        pagination = query.paginate(
-            page=page, per_page=per_page, error_out=False
-        )
-        
-        AnalyticsEvent.log_event('page_view', metadata={'page': 'jobs', 'search': search, 'state': state})
-        
-        return jsonify({
-            'jobs': [job.to_dict() for job in pagination.items],
-            'total': pagination.total,
-            'pages': pagination.pages,
-            'current_page': page,
-            'per_page': per_page,
-            'has_next': pagination.has_next,
-            'has_prev': pagination.has_prev,
-            'filters': {
-                'states': ['Telangana', 'Andhra Pradesh'],
-                'categories': INDIAN_JOB_CATEGORIES,
-                'job_types': ['government', 'private', 'remote'],
-                'education_levels': EDUCATION_QUALIFICATIONS
-            }
-        })
-    
-    @app.route('/api/v1/jobs/<job_id>', methods=['GET'])
-    def get_job(job_id):
-        job = Job.query.get_or_404(job_id)
-        
-        if job.status != 'published':
-            abort(404)
-        
-        job.increment_view_count()
-        AnalyticsEvent.log_event('job_view', resource_id=job_id, resource_type='job', 
-                                metadata={'state': job.state, 'category': job.category})
-        
-        ACTIVE_JOBS.set(Job.query.filter_by(status='published').count())
-        
-        related_jobs = Job.query.filter(
-            Job.id != job.id,
-            Job.status == 'published',
-            or_(
-                Job.category == job.category,
-                Job.state == job.state,
-                Job.company == job.company
-            )
-        ).limit(5).all()
-        
-        return jsonify({
-            'job': job.to_dict(include_stats=True),
-            'related_jobs': [related_job.to_dict() for related_job in related_jobs]
-        })
-    
-    @app.route('/api/v1/jobs/<job_id>/share', methods=['POST'])
-    def share_job(job_id):
-        job = Job.query.get_or_404(job_id)
-        job.increment_share_count()
-        AnalyticsEvent.log_event('share', resource_id=job_id, resource_type='job')
-        return jsonify({'message': 'Share tracked'})
-    
-    @app.route('/api/v1/jobs/<job_id>/bookmark', methods=['POST'])
-    def bookmark_job(job_id):
-        job = Job.query.get_or_404(job_id)
-        job.increment_bookmark_count()
-        AnalyticsEvent.log_event('bookmark', resource_id=job_id, resource_type='job')
-        return jsonify({'message': 'Bookmark tracked'})
-    
-    @app.route('/api/v1/jobs/government', methods=['GET'])
-    @cache.cached(timeout=600, query_string=True)
-    def get_government_jobs():
-        page = request.args.get('page', 1, type=int)
-        per_page = min(request.args.get('per_page', 20, type=int), 50)
-        state = request.args.get('state')
-        category = request.args.get('category')
-        education = request.args.get('education')
-        
-        query = Job.query.filter_by(status='published', job_type='government')
-        
-        if state:
-            query = query.filter_by(state=state)
-        if category:
-            query = query.filter_by(category=category)
-        if education:
-            query = query.filter(Job.education_required.ilike(f'%{education}%'))
-        
-        query = query.order_by(desc(Job.is_urgent), desc(Job.application_deadline), desc(Job.created_at))
-        
-        pagination = query.paginate(
-            page=page, per_page=per_page, error_out=False
-        )
-        
-        AnalyticsEvent.log_event('page_view', metadata={'page': 'government_jobs', 'state': state})
-        
-        return jsonify({
-            'jobs': [job.to_dict() for job in pagination.items],
-            'total': pagination.total,
-            'pages': pagination.pages,
-            'current_page': page,
-            'per_page': per_page
-        })
-    
-    @app.route('/api/v1/jobs/urgent', methods=['GET'])
-    @cache.cached(timeout=180)
-    def get_urgent_jobs():
-        urgent_jobs = Job.query.filter_by(
-            status='published', 
-            is_urgent=True
-        ).order_by(desc(Job.application_deadline)).limit(20).all()
-        
-        AnalyticsEvent.log_event('page_view', metadata={'page': 'urgent_jobs'})
-        
-        return jsonify({
-            'jobs': [job.to_dict() for job in urgent_jobs],
-            'count': len(urgent_jobs)
-        })
-    
-    @app.route('/api/v1/admin/sync-indian-jobs', methods=['POST'])
-    @jwt_required()
-    @require_role('super_admin')
-    def trigger_indian_job_sync():
-        try:
-            sync_indian_jobs_task.delay()
-            return jsonify({'message': 'Indian job sync started successfully'})
-        except Exception as e:
-            logger.error("Failed to trigger Indian job sync", error=str(e))
-            return jsonify({'error': 'Failed to start job sync'}), 500
-    
-    @app.route('/api/v1/analytics/jobs', methods=['GET'])
-    @cache.cached(timeout=3600)
-    def get_job_analytics():
-        days = request.args.get('days', 7, type=int)
-        start_date = datetime.utcnow() - timedelta(days=days)
-        
-        total_jobs = Job.query.filter_by(status='published').count()
-        telangana_jobs = Job.query.filter_by(status='published', state='Telangana').count()
-        ap_jobs = Job.query.filter_by(status='published', state='Andhra Pradesh').count()
-        government_jobs = Job.query.filter_by(status='published', job_type='government').count()
-        urgent_jobs = Job.query.filter_by(status='published', is_urgent=True).count()
-        
-        category_stats = db.session.query(
-            Job.category,
-            func.count(Job.id).label('count')
-        ).filter_by(status='published').group_by(Job.category).all()
-        
-        recent_views = db.session.query(func.count(AnalyticsEvent.id)).filter(
-            AnalyticsEvent.event_type == 'job_view',
-            AnalyticsEvent.timestamp >= start_date
-        ).scalar()
-        
-        return jsonify({
-            'summary': {
-                'total_jobs': total_jobs,
-                'telangana_jobs': telangana_jobs,
-                'andhra_pradesh_jobs': ap_jobs,
-                'government_jobs': government_jobs,
-                'urgent_jobs': urgent_jobs,
-                'recent_views': recent_views
-            },
-            'category_distribution': [
-                {'category': stat.category, 'count': stat.count}
-                for stat in category_stats
-            ]
-        })
-    
-    @app.route('/api/v1/stats', methods=['GET'])
-    @cache.cached(timeout=900)
-    def get_public_stats():
-        stats = {
-            'total_jobs': Job.query.filter_by(status='published').count(),
-            'government_jobs': Job.query.filter_by(status='published', job_type='government').count(),
-            'private_jobs': Job.query.filter_by(status='published', job_type='private').count(),
-            'remote_jobs': Job.query.filter_by(status='published', job_type='remote').count(),
-            'telangana_jobs': Job.query.filter_by(status='published', state='Telangana').count(),
-            'andhra_pradesh_jobs': Job.query.filter_by(status='published', state='Andhra Pradesh').count(),
-            'urgent_jobs': Job.query.filter_by(status='published', is_urgent=True).count(),
-            'total_services': Service.query.filter_by(is_active=True).count(),
-            'last_updated': datetime.utcnow().isoformat()
-        }
-        
-        return jsonify(stats)
-    
-    @app.route('/api/v1/health', methods=['GET'])
-    def health_check():
-        try:
-            db.session.execute(text('SELECT 1'))
-            
-            return jsonify({
-                'status': 'healthy',
-                'timestamp': datetime.utcnow().isoformat(),
-                'version': '2.0.0-india',
-                'region': 'India - Telangana & Andhra Pradesh',
-                'services': {
-                    'database': 'up',
-                    'redis': 'up',
-                    'celery': 'up'
-                }
-            })
-        except Exception as e:
-            return jsonify({
-                'status': 'unhealthy',
-                'error': str(e),
-                'timestamp': datetime.utcnow().isoformat()
-            }), 500
-    
-    return app
+    return jsonify({
+        'status': 'healthy' if db_status == 'healthy' else 'degraded',
+        'database': db_status,
+        'scheduler': 'running' if scheduler.running else 'stopped'
+    }), 200 if db_status == 'healthy' else 503
+
+
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({'error': 'Resource not found'}), 404
+
+
+@app.errorhandler(500)
+def internal_error(e):
+    return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.errorhandler(429)
+def rate_limit_exceeded(e):
+    return jsonify({'error': 'Rate limit exceeded'}), 429
 
 
 if __name__ == '__main__':
-    app = create_app()
-    port = int(os.environ.get('PORT', 5000))
-    app.run(
-        debug=os.environ.get('FLASK_ENV') == 'development',
-        host='0.0.0.0',
-        port=port
-    )
+    with app.app_context():
+        db.create_all()
+        
+        if not User.query.filter_by(role=UserRole.SUPER_ADMIN).first():
+            admin = User(
+                email=os.getenv('SUPER_ADMIN_EMAIL', 'admin@sridharservices.com'),
+                full_name='Super Admin',
+                role=UserRole.SUPER_ADMIN,
+                is_active=True
+            )
+            admin.set_password(os.getenv('SUPER_ADMIN_PASSWORD', 'ChangeMe123!'))
+            db.session.add(admin)
+            db.session.commit()
+            print(f"Super admin created: {admin.email}")
+    
+    if not scheduler.running:
+        scheduler.start()
+    
+    port = int(os.getenv('PORT', 5000))
+    debug = os.getenv('FLASK_ENV') != 'production'
+    app.run(host='0.0.0.0', port=port, debug=debug)
