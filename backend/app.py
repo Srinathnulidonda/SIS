@@ -1,12 +1,15 @@
+#backend/app.py
+#backend/app.py
 import os
 import logging
 import secrets
 import re
 import uuid
+import jwt
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Optional, Dict, List
-from urllib.parse import urlencode, quote
+from urllib.parse import quote
 import hashlib
 
 from flask import Flask, request, jsonify, g
@@ -14,11 +17,12 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from sqlalchemy import or_, and_, func
+from sqlalchemy import or_, and_, func, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.dialects.postgresql import UUID
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import cloudinary
 import cloudinary.uploader
@@ -63,7 +67,8 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 }
 
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
-app.config['ADMIN_API_KEY'] = os.environ.get('ADMIN_API_KEY', 'sridhar_admin_key_2024_secure')
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', secrets.token_hex(32))
+app.config['JWT_EXPIRATION_HOURS'] = 24
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_EXTENSIONS'] = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 app.config['JSON_SORT_KEYS'] = False
@@ -107,12 +112,7 @@ except Exception as e:
         default_limits=["500 per day", "100 per hour"]
     )
 
-def requests_retry_session(
-    retries=3,
-    backoff_factor=0.3,
-    status_forcelist=(500, 502, 504),
-    session=None,
-):
+def requests_retry_session(retries=3, backoff_factor=0.3, status_forcelist=(500, 502, 504), session=None):
     session = session or requests.Session()
     retry = Retry(
         total=retries,
@@ -125,6 +125,42 @@ def requests_retry_session(
     session.mount('http://', adapter)
     session.mount('https://', adapter)
     return session
+
+class Admin(db.Model):
+    __tablename__ = 'admins'
+    
+    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    email = db.Column(db.String(120), unique=True)
+    is_active = db.Column(db.Boolean, default=True)
+    last_login = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+    
+    def generate_token(self):
+        payload = {
+            'admin_id': str(self.id),
+            'username': self.username,
+            'exp': datetime.utcnow() + timedelta(hours=app.config['JWT_EXPIRATION_HOURS']),
+            'iat': datetime.utcnow()
+        }
+        return jwt.encode(payload, app.config['JWT_SECRET_KEY'], algorithm='HS256')
+    
+    def to_dict(self):
+        return {
+            'id': str(self.id),
+            'username': self.username,
+            'email': self.email,
+            'is_active': self.is_active,
+            'last_login': self.last_login.isoformat() if self.last_login else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
 
 class Service(db.Model):
     __tablename__ = 'services'
@@ -333,21 +369,11 @@ def extract_location_info(location_str: str) -> Dict[str, Optional[str]]:
     location_str = location_str.strip()
     
     indian_states = {
-        'telangana': 'Telangana',
-        'andhra pradesh': 'Andhra Pradesh',
-        'ap': 'Andhra Pradesh',
-        'hyderabad': 'Telangana',
-        'visakhapatnam': 'Andhra Pradesh',
-        'vijayawada': 'Andhra Pradesh',
-        'guntur': 'Andhra Pradesh',
-        'tirupati': 'Andhra Pradesh',
-        'warangal': 'Telangana',
-        'nizamabad': 'Telangana',
-        'karimnagar': 'Telangana',
-        'rajahmundry': 'Andhra Pradesh',
-        'nellore': 'Andhra Pradesh',
-        'kurnool': 'Andhra Pradesh',
-        'secunderabad': 'Telangana',
+        'telangana': 'Telangana', 'andhra pradesh': 'Andhra Pradesh', 'ap': 'Andhra Pradesh',
+        'hyderabad': 'Telangana', 'visakhapatnam': 'Andhra Pradesh', 'vijayawada': 'Andhra Pradesh',
+        'guntur': 'Andhra Pradesh', 'tirupati': 'Andhra Pradesh', 'warangal': 'Telangana',
+        'nizamabad': 'Telangana', 'karimnagar': 'Telangana', 'rajahmundry': 'Andhra Pradesh',
+        'nellore': 'Andhra Pradesh', 'kurnool': 'Andhra Pradesh', 'secunderabad': 'Telangana',
     }
     
     location_lower = location_str.lower()
@@ -411,18 +437,39 @@ def paginate(query, page: int, per_page: int = 20):
             'pages': 0
         }
 
-def require_api_key(f):
+def verify_token(token):
+    try:
+        payload = jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        api_key = request.headers.get('X-API-Key') or request.args.get('api_key')
-        if not api_key or api_key != app.config['ADMIN_API_KEY']:
-            logger.warning(f"Unauthorized API access attempt from {get_remote_address(request)}")
-            return jsonify({
-                'error': 'Unauthorized',
-                'message': 'Valid API key required',
-                'status': 401
-            }), 401
-        g.is_admin = True
+        token = None
+        auth_header = request.headers.get('Authorization')
+        
+        if auth_header:
+            try:
+                token = auth_header.split(' ')[1]
+            except IndexError:
+                return jsonify({'error': 'Unauthorized', 'message': 'Invalid token format'}), 401
+        
+        if not token:
+            return jsonify({'error': 'Unauthorized', 'message': 'Authentication token required'}), 401
+        
+        payload = verify_token(token)
+        if not payload:
+            return jsonify({'error': 'Unauthorized', 'message': 'Invalid or expired token'}), 401
+        
+        admin = Admin.query.filter_by(id=payload['admin_id'], is_active=True).first()
+        if not admin:
+            return jsonify({'error': 'Unauthorized', 'message': 'Admin not found or inactive'}), 401
+        
+        g.current_admin = admin
         return f(*args, **kwargs)
     return decorated_function
 
@@ -454,55 +501,79 @@ def track_analytics(event_type: str):
 
 @app.errorhandler(400)
 def bad_request(e):
-    return jsonify({
-        'error': 'Bad Request',
-        'message': str(e),
-        'status': 400
-    }), 400
+    return jsonify({'error': 'Bad Request', 'message': str(e), 'status': 400}), 400
 
 @app.errorhandler(404)
 def not_found(e):
-    return jsonify({
-        'error': 'Not Found',
-        'message': 'The requested resource was not found',
-        'status': 404
-    }), 404
+    return jsonify({'error': 'Not Found', 'message': 'The requested resource was not found', 'status': 404}), 404
 
 @app.errorhandler(429)
 def ratelimit_handler(e):
-    return jsonify({
-        'error': 'Too Many Requests',
-        'message': 'Rate limit exceeded. Please try again later.',
-        'status': 429
-    }), 429
+    return jsonify({'error': 'Too Many Requests', 'message': 'Rate limit exceeded. Please try again later.', 'status': 429}), 429
 
 @app.errorhandler(500)
 def internal_error(e):
     logger.error(f"Internal server error: {e}", exc_info=True)
     db.session.rollback()
-    return jsonify({
-        'error': 'Internal Server Error',
-        'message': 'An unexpected error occurred',
-        'status': 500
-    }), 500
+    return jsonify({'error': 'Internal Server Error', 'message': 'An unexpected error occurred', 'status': 500}), 500
 
 @app.errorhandler(ValidationError)
 def validation_error(e):
-    return jsonify({
-        'error': 'Validation Error',
-        'messages': e.messages,
-        'status': 422
-    }), 422
+    return jsonify({'error': 'Validation Error', 'messages': e.messages, 'status': 422}), 422
 
 @app.errorhandler(OperationalError)
 def database_error(e):
     logger.error(f"Database error: {e}", exc_info=True)
     db.session.rollback()
+    return jsonify({'error': 'Database Error', 'message': 'Database operation failed. Please try again.', 'status': 503}), 503
+
+@app.route('/api/auth/login', methods=['POST'])
+@limiter.limit("5 per minute")
+def admin_login():
+    try:
+        data = request.json
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            return jsonify({'error': 'Bad Request', 'message': 'Username and password required'}), 400
+        
+        admin = Admin.query.filter_by(username=username, is_active=True).first()
+        
+        if not admin or not admin.check_password(password):
+            return jsonify({'error': 'Unauthorized', 'message': 'Invalid credentials'}), 401
+        
+        admin.last_login = datetime.utcnow()
+        db.session.commit()
+        
+        token = admin.generate_token()
+        
+        logger.info(f"Admin login successful: {username}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Login successful',
+            'token': token,
+            'admin': admin.to_dict()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error during login: {e}")
+        return jsonify({'error': 'Login failed', 'message': str(e)}), 500
+
+@app.route('/api/auth/verify', methods=['GET'])
+@require_auth
+def verify_auth():
     return jsonify({
-        'error': 'Database Error',
-        'message': 'Database operation failed. Please try again.',
-        'status': 503
-    }), 503
+        'success': True,
+        'admin': g.current_admin.to_dict()
+    }), 200
+
+@app.route('/api/auth/logout', methods=['POST'])
+@require_auth
+def admin_logout():
+    logger.info(f"Admin logout: {g.current_admin.username}")
+    return jsonify({'success': True, 'message': 'Logout successful'}), 200
 
 @app.route('/api/health', methods=['GET'])
 @limiter.exempt
@@ -515,7 +586,7 @@ def health_check():
     }
     
     try:
-        db.session.execute(db.text('SELECT 1'))
+        db.session.execute(text('SELECT 1'))
         health_status['components']['database'] = 'healthy'
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
@@ -536,39 +607,6 @@ def health_check():
     
     status_code = 200 if health_status['status'] == 'ok' else 503
     return jsonify(health_status), status_code
-
-@app.route('/api/health/detailed', methods=['GET'])
-@limiter.limit("10 per minute")
-@require_api_key
-def detailed_health_check():
-    try:
-        metrics = {
-            'database': {
-                'total_jobs': Job.query.count(),
-                'active_jobs': Job.query.filter_by(is_active=True).count(),
-                'approved_jobs': Job.query.filter_by(is_approved=True).count(),
-                'pending_jobs': Job.query.filter_by(is_approved=False, is_active=True).count(),
-                'total_services': Service.query.count(),
-                'active_services': Service.query.filter_by(is_active=True).count()
-            },
-            'jobs_by_state': dict(
-                db.session.query(Job.state, func.count(Job.id))
-                .filter(Job.is_active == True, Job.state.isnot(None))
-                .group_by(Job.state)
-                .all()
-            ),
-            'jobs_by_category': dict(
-                db.session.query(Job.job_category, func.count(Job.id))
-                .filter(Job.is_active == True, Job.job_category.isnot(None))
-                .group_by(Job.job_category)
-                .all()
-            ),
-            'timestamp': datetime.utcnow().isoformat()
-        }
-        return jsonify(metrics), 200
-    except Exception as e:
-        logger.error(f"Detailed health check failed: {e}")
-        return jsonify({'error': 'Health check failed', 'message': str(e)}), 500
 
 @app.route('/api/services', methods=['GET'])
 @limiter.limit("200 per hour")
@@ -620,16 +658,9 @@ def get_service(slug):
     try:
         service = Service.query.filter_by(slug=slug).first()
         if not service:
-            return jsonify({
-                'error': 'Not Found',
-                'message': 'Service not found',
-                'status': 404
-            }), 404
+            return jsonify({'error': 'Not Found', 'message': 'Service not found', 'status': 404}), 404
         
-        return jsonify({
-            'success': True,
-            'service': service.to_dict(detail=True)
-        }), 200
+        return jsonify({'success': True, 'service': service.to_dict(detail=True)}), 200
         
     except Exception as e:
         logger.error(f"Error fetching service {slug}: {e}")
@@ -637,7 +668,7 @@ def get_service(slug):
 
 @app.route('/api/services', methods=['POST'])
 @limiter.limit("30 per hour")
-@require_api_key
+@require_auth
 def create_service():
     try:
         schema = ServiceSchema()
@@ -681,7 +712,7 @@ def create_service():
 
 @app.route('/api/services/<slug>', methods=['PUT', 'PATCH'])
 @limiter.limit("30 per hour")
-@require_api_key
+@require_auth
 def update_service(slug):
     try:
         service = Service.query.filter_by(slug=slug).first()
@@ -736,7 +767,7 @@ def update_service(slug):
 
 @app.route('/api/services/<slug>', methods=['DELETE'])
 @limiter.limit("20 per hour")
-@require_api_key
+@require_auth
 def delete_service(slug):
     try:
         service = Service.query.filter_by(slug=slug).first()
@@ -749,10 +780,7 @@ def delete_service(slug):
         
         logger.info(f"Service deleted: {service_title}")
         
-        return jsonify({
-            'success': True,
-            'message': 'Service deleted successfully'
-        }), 200
+        return jsonify({'success': True, 'message': 'Service deleted successfully'}), 200
         
     except Exception as e:
         db.session.rollback()
@@ -778,7 +806,16 @@ def get_jobs():
         company = request.args.get('company', type=str)
         source = request.args.get('source', type=str)
         
-        is_admin = request.headers.get('X-API-Key') == app.config['ADMIN_API_KEY']
+        auth_header = request.headers.get('Authorization')
+        is_admin = False
+        if auth_header:
+            try:
+                token = auth_header.split(' ')[1]
+                payload = verify_token(token)
+                if payload:
+                    is_admin = True
+            except:
+                pass
         
         query = Job.query
         
@@ -850,7 +887,16 @@ def get_jobs():
 @track_analytics('view')
 def get_job(slug):
     try:
-        is_admin = request.headers.get('X-API-Key') == app.config['ADMIN_API_KEY']
+        auth_header = request.headers.get('Authorization')
+        is_admin = False
+        if auth_header:
+            try:
+                token = auth_header.split(' ')[1]
+                payload = verify_token(token)
+                if payload:
+                    is_admin = True
+            except:
+                pass
         
         query = Job.query.filter_by(slug=slug)
         if not is_admin:
@@ -858,18 +904,11 @@ def get_job(slug):
         
         job = query.first()
         if not job:
-            return jsonify({
-                'error': 'Not Found',
-                'message': 'Job not found',
-                'status': 404
-            }), 404
+            return jsonify({'error': 'Not Found', 'message': 'Job not found', 'status': 404}), 404
         
         job.increment_views()
         
-        return jsonify({
-            'success': True,
-            'job': job.to_dict(detail=True)
-        }), 200
+        return jsonify({'success': True, 'job': job.to_dict(detail=True)}), 200
         
     except Exception as e:
         logger.error(f"Error fetching job {slug}: {e}")
@@ -877,7 +916,7 @@ def get_job(slug):
 
 @app.route('/api/jobs', methods=['POST'])
 @limiter.limit("30 per hour")
-@require_api_key
+@require_auth
 def create_job():
     try:
         schema = JobSchema()
@@ -911,12 +950,7 @@ def create_job():
             slug = f"{base_slug}-{counter}"
             counter += 1
         
-        job = Job(
-            slug=slug,
-            is_approved=True,
-            source='manual',
-            **data
-        )
+        job = Job(slug=slug, is_approved=True, source='manual', **data)
         
         db.session.add(job)
         db.session.commit()
@@ -942,7 +976,7 @@ def create_job():
 
 @app.route('/api/jobs/<slug>', methods=['PUT', 'PATCH'])
 @limiter.limit("30 per hour")
-@require_api_key
+@require_auth
 def update_job(slug):
     try:
         job = Job.query.filter_by(slug=slug).first()
@@ -1014,7 +1048,7 @@ def update_job(slug):
 
 @app.route('/api/jobs/<slug>', methods=['DELETE'])
 @limiter.limit("20 per hour")
-@require_api_key
+@require_auth
 def delete_job(slug):
     try:
         job = Job.query.filter_by(slug=slug).first()
@@ -1027,10 +1061,7 @@ def delete_job(slug):
         
         logger.info(f"Job deleted: {job_title}")
         
-        return jsonify({
-            'success': True,
-            'message': 'Job deleted successfully'
-        }), 200
+        return jsonify({'success': True, 'message': 'Job deleted successfully'}), 200
         
     except Exception as e:
         db.session.rollback()
@@ -1039,7 +1070,7 @@ def delete_job(slug):
 
 @app.route('/api/jobs/<slug>/approve', methods=['POST'])
 @limiter.limit("100 per hour")
-@require_api_key
+@require_auth
 def approve_job(slug):
     try:
         job = Job.query.filter_by(slug=slug).first()
@@ -1065,7 +1096,7 @@ def approve_job(slug):
 
 @app.route('/api/jobs/<slug>/reject', methods=['POST'])
 @limiter.limit("100 per hour")
-@require_api_key
+@require_auth
 def reject_job(slug):
     try:
         job = Job.query.filter_by(slug=slug).first()
@@ -1092,7 +1123,7 @@ def reject_job(slug):
 
 @app.route('/api/admin/jobs/pending', methods=['GET'])
 @limiter.limit("200 per hour")
-@require_api_key
+@require_auth
 def get_pending_jobs():
     try:
         page = request.args.get('page', 1, type=int)
@@ -1166,39 +1197,27 @@ def get_pending_jobs():
 
 @app.route('/api/admin/jobs/bulk-approve', methods=['POST'])
 @limiter.limit("30 per hour")
-@require_api_key
+@require_auth
 def bulk_approve_jobs():
     try:
         data = request.json
         job_ids = data.get('job_ids', [])
         
         if not job_ids or not isinstance(job_ids, list):
-            return jsonify({
-                'error': 'Bad Request',
-                'message': 'job_ids must be a non-empty array'
-            }), 400
+            return jsonify({'error': 'Bad Request', 'message': 'job_ids must be a non-empty array'}), 400
         
         if len(job_ids) > 100:
-            return jsonify({
-                'error': 'Bad Request',
-                'message': 'Cannot approve more than 100 jobs at once'
-            }), 400
+            return jsonify({'error': 'Bad Request', 'message': 'Cannot approve more than 100 jobs at once'}), 400
         
         try:
             job_uuids = [uuid.UUID(job_id) if isinstance(job_id, str) else job_id for job_id in job_ids]
         except ValueError:
-            return jsonify({
-                'error': 'Bad Request',
-                'message': 'Invalid UUID format in job_ids'
-            }), 400
+            return jsonify({'error': 'Bad Request', 'message': 'Invalid UUID format in job_ids'}), 400
         
         jobs = Job.query.filter(Job.id.in_(job_uuids)).all()
         
         if not jobs:
-            return jsonify({
-                'error': 'Not Found',
-                'message': 'No jobs found with provided IDs'
-            }), 404
+            return jsonify({'error': 'Not Found', 'message': 'No jobs found with provided IDs'}), 404
         
         approved_count = 0
         for job in jobs:
@@ -1223,39 +1242,27 @@ def bulk_approve_jobs():
 
 @app.route('/api/admin/jobs/bulk-reject', methods=['POST'])
 @limiter.limit("30 per hour")
-@require_api_key
+@require_auth
 def bulk_reject_jobs():
     try:
         data = request.json
         job_ids = data.get('job_ids', [])
         
         if not job_ids or not isinstance(job_ids, list):
-            return jsonify({
-                'error': 'Bad Request',
-                'message': 'job_ids must be a non-empty array'
-            }), 400
+            return jsonify({'error': 'Bad Request', 'message': 'job_ids must be a non-empty array'}), 400
         
         if len(job_ids) > 100:
-            return jsonify({
-                'error': 'Bad Request',
-                'message': 'Cannot reject more than 100 jobs at once'
-            }), 400
+            return jsonify({'error': 'Bad Request', 'message': 'Cannot reject more than 100 jobs at once'}), 400
         
         try:
             job_uuids = [uuid.UUID(job_id) if isinstance(job_id, str) else job_id for job_id in job_ids]
         except ValueError:
-            return jsonify({
-                'error': 'Bad Request',
-                'message': 'Invalid UUID format in job_ids'
-            }), 400
+            return jsonify({'error': 'Bad Request', 'message': 'Invalid UUID format in job_ids'}), 400
         
         jobs = Job.query.filter(Job.id.in_(job_uuids)).all()
         
         if not jobs:
-            return jsonify({
-                'error': 'Not Found',
-                'message': 'No jobs found with provided IDs'
-            }), 404
+            return jsonify({'error': 'Not Found', 'message': 'No jobs found with provided IDs'}), 404
         
         rejected_count = 0
         for job in jobs:
@@ -1281,7 +1288,7 @@ def bulk_reject_jobs():
 
 @app.route('/api/admin/stats', methods=['GET'])
 @limiter.limit("200 per hour")
-@require_api_key
+@require_auth
 def get_admin_stats():
     try:
         days = request.args.get('days', 30, type=int)
@@ -1343,10 +1350,7 @@ def get_admin_stats():
             'timestamp': datetime.utcnow().isoformat()
         }
         
-        return jsonify({
-            'success': True,
-            'stats': stats
-        }), 200
+        return jsonify({'success': True, 'stats': stats}), 200
         
     except Exception as e:
         logger.error(f"Error getting admin stats: {e}")
@@ -1354,7 +1358,7 @@ def get_admin_stats():
 
 @app.route('/api/upload', methods=['POST'])
 @limiter.limit("20 per hour")
-@require_api_key
+@require_auth
 def upload_image():
     try:
         if 'file' not in request.files:
@@ -1606,156 +1610,6 @@ def fetch_jobs_from_indeed_rss():
         db.session.rollback()
         return 0
 
-def fetch_jobs_from_naukri_rss():
-    try:
-        keywords = ['software+developer', 'web+developer', 'data+analyst']
-        locations = [
-            ('Hyderabad/Secunderabad', 'Telangana', 'Hyderabad'),
-            ('Vijayawada', 'Andhra Pradesh', 'Vijayawada'),
-        ]
-        
-        jobs_added = 0
-        
-        for keyword in keywords[:1]:
-            for location, state, city in locations[:1]:
-                url = f"https://www.naukri.com/jobs-in-{location.lower().replace('/', '-')}-rss"
-                
-                try:
-                    feed = feedparser.parse(url)
-                    
-                    for entry in feed.entries[:5]:
-                        title = entry.get('title', 'Untitled Position')
-                        link = entry.get('link', '')
-                        description = entry.get('description', 'No description available')
-                        
-                        external_id = f"naukri_{hashlib.md5(link.encode()).hexdigest()[:16]}"
-                        
-                        if Job.query.filter_by(external_id=external_id).first():
-                            continue
-                        
-                        company = 'Company'
-                        if hasattr(entry, 'author'):
-                            company = entry.author
-                        
-                        slug = generate_slug(f"{title}-{company}-{city}")
-                        base_slug = slug
-                        counter = 1
-                        while Job.query.filter_by(slug=slug).first():
-                            slug = f"{base_slug}-{counter}"
-                            counter += 1
-                        
-                        job_category = categorize_company(company)
-                        
-                        job = Job(
-                            title=title[:300],
-                            slug=slug,
-                            company=company[:200],
-                            location=location[:200],
-                            state=state,
-                            city=city,
-                            job_type='full-time',
-                            job_category=job_category,
-                            description=description[:10000],
-                            apply_url=link,
-                            external_id=external_id,
-                            source='naukri',
-                            is_approved=False,
-                            is_active=True,
-                            expires_at=datetime.utcnow() + timedelta(days=30)
-                        )
-                        
-                        db.session.add(job)
-                        jobs_added += 1
-                        
-                except Exception as feed_error:
-                    logger.warning(f"Error parsing feed {url}: {feed_error}")
-                    continue
-        
-        if jobs_added > 0:
-            db.session.commit()
-            logger.info(f"Added {jobs_added} jobs from Naukri RSS")
-        
-        return jobs_added
-    except Exception as e:
-        logger.error(f"Error fetching jobs from Naukri RSS: {e}")
-        db.session.rollback()
-        return 0
-
-def fetch_govt_jobs():
-    try:
-        jobs_added = 0
-        
-        govt_jobs = [
-            {
-                'title': 'Assistant Professor',
-                'company': 'Telangana State Public Service Commission',
-                'location': 'Hyderabad, Telangana',
-                'description': 'TSPSC invites applications for Assistant Professor positions in various government colleges',
-                'apply_url': 'https://tspsc.gov.in'
-            },
-            {
-                'title': 'Junior Assistant',
-                'company': 'Andhra Pradesh Public Service Commission',
-                'location': 'Vijayawada, Andhra Pradesh',
-                'description': 'APPSC recruitment for Junior Assistant positions',
-                'apply_url': 'https://psc.ap.gov.in'
-            },
-            {
-                'title': 'Police Constable',
-                'company': 'Telangana State Level Police Recruitment Board',
-                'location': 'Across Telangana',
-                'description': 'TSLPRB notification for Police Constable positions',
-                'apply_url': 'https://tslprb.in'
-            }
-        ]
-        
-        for job_data in govt_jobs:
-            unique_str = f"{job_data['title']}_{job_data['company']}"
-            external_id = f"govt_{hashlib.md5(unique_str.encode()).hexdigest()[:16]}"
-            
-            if Job.query.filter_by(external_id=external_id).first():
-                continue
-            
-            loc_info = extract_location_info(job_data['location'])
-            
-            slug = generate_slug(f"{job_data['title']}-{job_data['company']}")
-            base_slug = slug
-            counter = 1
-            while Job.query.filter_by(slug=slug).first():
-                slug = f"{base_slug}-{counter}"
-                counter += 1
-            
-            job = Job(
-                title=job_data['title'][:300],
-                slug=slug,
-                company=job_data['company'][:200],
-                location=job_data['location'][:200],
-                state=loc_info['state'],
-                city=loc_info['city'],
-                job_type='full-time',
-                job_category='government',
-                description=job_data['description'][:10000],
-                apply_url=job_data['apply_url'],
-                external_id=external_id,
-                source='govt_portal',
-                is_approved=False,
-                is_active=True,
-                expires_at=datetime.utcnow() + timedelta(days=60)
-            )
-            
-            db.session.add(job)
-            jobs_added += 1
-        
-        if jobs_added > 0:
-            db.session.commit()
-            logger.info(f"Added {jobs_added} government jobs")
-        
-        return jobs_added
-    except Exception as e:
-        logger.error(f"Error fetching government jobs: {e}")
-        db.session.rollback()
-        return 0
-
 def sync_external_jobs():
     with app.app_context():
         logger.info("Starting external job sync...")
@@ -1766,8 +1620,6 @@ def sync_external_jobs():
                 ('Remotive', fetch_jobs_from_remotive),
                 ('Arbeitnow', fetch_jobs_from_arbeitnow),
                 ('Indeed RSS', fetch_jobs_from_indeed_rss),
-                ('Naukri RSS', fetch_jobs_from_naukri_rss),
-                ('Government', fetch_govt_jobs)
             ]
             
             for source_name, fetch_func in sources:
@@ -1884,7 +1736,7 @@ scheduler.add_job(
 
 @app.route('/api/admin/sync-jobs', methods=['POST'])
 @limiter.limit("10 per hour")
-@require_api_key
+@require_auth
 def trigger_job_sync():
     try:
         source = request.json.get('source') if request.json else None
@@ -1894,8 +1746,6 @@ def trigger_job_sync():
                 'remotive': fetch_jobs_from_remotive,
                 'arbeitnow': fetch_jobs_from_arbeitnow,
                 'indeed': fetch_jobs_from_indeed_rss,
-                'naukri': fetch_jobs_from_naukri_rss,
-                'government': fetch_govt_jobs
             }
             
             if source not in source_map:
@@ -1924,7 +1774,7 @@ def trigger_job_sync():
 
 @app.route('/api/admin/cleanup', methods=['POST'])
 @limiter.limit("10 per hour")
-@require_api_key
+@require_auth
 def trigger_cleanup():
     try:
         cleanup_expired_jobs()
@@ -1939,55 +1789,6 @@ def trigger_cleanup():
         logger.error(f"Error in manual cleanup: {e}")
         return jsonify({'error': 'Failed to perform cleanup', 'message': str(e)}), 500
 
-@app.route('/api/admin/export', methods=['GET'])
-@limiter.limit("10 per hour")
-@require_api_key
-def export_data():
-    try:
-        data_type = request.args.get('type', 'jobs')
-        
-        if data_type == 'jobs':
-            jobs = Job.query.all()
-            data = [j.to_dict(detail=True) for j in jobs]
-        elif data_type == 'services':
-            services = Service.query.all()
-            data = [s.to_dict(detail=True) for s in services]
-        elif data_type == 'analytics':
-            analytics = db.session.query(
-                JobAnalytics.job_id,
-                func.count(JobAnalytics.id).label('count'),
-                JobAnalytics.event_type
-            ).group_by(
-                JobAnalytics.job_id,
-                JobAnalytics.event_type
-            ).all()
-            
-            data = [
-                {
-                    'job_id': str(a.job_id),
-                    'event_type': a.event_type,
-                    'count': a.count
-                }
-                for a in analytics
-            ]
-        else:
-            return jsonify({
-                'error': 'Bad Request',
-                'message': 'Invalid type. Valid types: jobs, services, analytics'
-            }), 400
-        
-        return jsonify({
-            'success': True,
-            'type': data_type,
-            'count': len(data),
-            'data': data,
-            'exported_at': datetime.utcnow().isoformat()
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error exporting data: {e}")
-        return jsonify({'error': 'Failed to export data', 'message': str(e)}), 500
-
 @app.route('/', methods=['GET'])
 @limiter.exempt
 def index():
@@ -1997,39 +1798,26 @@ def index():
         'description': 'Professional job portal API focused on Indian market',
         'regions': ['Telangana', 'Andhra Pradesh'],
         'endpoints': {
-            'health': {
-                'url': '/api/health',
-                'methods': ['GET'],
-                'description': 'Health check endpoint'
+            'auth': {
+                'login': '/api/auth/login',
+                'verify': '/api/auth/verify',
+                'logout': '/api/auth/logout'
             },
-            'services': {
-                'url': '/api/services',
-                'methods': ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-                'description': 'Service management endpoints'
-            },
-            'jobs': {
-                'url': '/api/jobs',
-                'methods': ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-                'description': 'Job listing endpoints'
-            },
+            'health': '/api/health',
+            'services': '/api/services',
+            'jobs': '/api/jobs',
             'admin': {
                 'pending_jobs': '/api/admin/jobs/pending',
                 'bulk_approve': '/api/admin/jobs/bulk-approve',
                 'bulk_reject': '/api/admin/jobs/bulk-reject',
                 'stats': '/api/admin/stats',
                 'sync_jobs': '/api/admin/sync-jobs',
-                'cleanup': '/api/admin/cleanup',
-                'export': '/api/admin/export'
+                'cleanup': '/api/admin/cleanup'
             }
         },
-        'job_sources': [
-            'manual', 'remotive', 'arbeitnow', 'indeed', 
-            'naukri', 'government'
-        ],
-        'job_categories': [
-            'government', 'private', 'mnc', 'startup', 'public-sector'
-        ],
-        'documentation': 'https://github.com/sridhar-services/api',
+        'job_sources': ['manual', 'remotive', 'arbeitnow', 'indeed'],
+        'job_categories': ['government', 'private', 'mnc', 'startup', 'public-sector', 'other'],
+        'authentication': 'JWT Bearer Token',
         'contact': 'admin@sridharservices.com'
     }), 200
 
@@ -2041,62 +1829,68 @@ def api_info():
 def init_db():
     with app.app_context():
         try:
-            db.session.execute(db.text('SELECT 1'))
+            db.session.execute(text('SELECT 1'))
             
             inspector = db.inspect(db.engine)
             existing_tables = inspector.get_table_names()
             
             logger.info(f"Existing tables: {existing_tables}")
             
-            tables_to_create = []
-            if 'services' not in existing_tables:
-                tables_to_create.append('services')
-            if 'jobs' not in existing_tables:
-                tables_to_create.append('jobs')
-            if 'job_analytics' not in existing_tables:
-                tables_to_create.append('job_analytics')
+            db.create_all()
+            logger.info("Database tables synchronized successfully")
             
-            if tables_to_create:
-                logger.info(f"Creating tables: {tables_to_create}")
-                db.create_all()
-                logger.info("Database tables created successfully")
-            else:
-                logger.info("All required tables already exist")
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS state VARCHAR(100)"))
+                    conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS city VARCHAR(100)"))
+                    conn.commit()
+                    logger.info("Migration: Added state and city columns to jobs table")
+            except Exception as migration_error:
+                logger.info(f"Migration skipped (columns may already exist): {migration_error}")
             
             with db.engine.connect() as conn:
                 index_queries = [
-                    """CREATE INDEX IF NOT EXISTS idx_jobs_state_city 
-                       ON jobs(state, city)""",
-                    """CREATE INDEX IF NOT EXISTS idx_jobs_category_approved 
-                       ON jobs(job_category, is_approved)""",
-                    """CREATE INDEX IF NOT EXISTS idx_jobs_created_approved 
-                       ON jobs(created_at DESC, is_approved)""",
-                    """CREATE INDEX IF NOT EXISTS idx_jobs_views 
-                       ON jobs(views_count DESC) WHERE views_count IS NOT NULL""",
-                    """CREATE INDEX IF NOT EXISTS idx_analytics_job_event 
-                       ON job_analytics(job_id, event_type)""",
-                    """CREATE INDEX IF NOT EXISTS idx_analytics_created 
-                       ON job_analytics(created_at DESC)""",
-                    """CREATE INDEX IF NOT EXISTS idx_jobs_slug 
-                       ON jobs(slug)""",
-                    """CREATE INDEX IF NOT EXISTS idx_services_slug 
-                       ON services(slug)"""
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state)",
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_city ON jobs(city)",
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_state_city ON jobs(state, city)",
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_category_approved ON jobs(job_category, is_approved)",
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_created_approved ON jobs(created_at DESC, is_approved)",
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_views ON jobs(views_count DESC)",
+                    "CREATE INDEX IF NOT EXISTS idx_analytics_job_event ON job_analytics(job_id, event_type)",
+                    "CREATE INDEX IF NOT EXISTS idx_analytics_created ON job_analytics(created_at DESC)",
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_slug ON jobs(slug)",
+                    "CREATE INDEX IF NOT EXISTS idx_services_slug ON services(slug)",
+                    "CREATE INDEX IF NOT EXISTS idx_admins_username ON admins(username)"
                 ]
                 
                 for query in index_queries:
                     try:
-                        conn.execute(db.text(query))
+                        conn.execute(text(query))
                         conn.commit()
                     except Exception as index_error:
                         logger.debug(f"Index creation skipped: {index_error}")
                         conn.rollback()
                         continue
             
+            admin = Admin.query.filter_by(username='admin').first()
+            if not admin:
+                admin = Admin(
+                    username='admin',
+                    email='admin@sridharservices.com',
+                    is_active=True
+                )
+                admin.set_password('admin123')
+                db.session.add(admin)
+                db.session.commit()
+                logger.info("Default admin user created: username='admin', password='admin123'")
+            else:
+                logger.info("Admin user already exists")
+            
             logger.info("Database initialization completed successfully")
             
         except Exception as e:
             logger.error(f"Error during database initialization: {e}")
-            logger.info("Application will continue with existing database structure")
+            raise
 
 def seed_sample_data():
     if os.environ.get('FLASK_ENV') != 'development':
@@ -2104,28 +1898,37 @@ def seed_sample_data():
     
     with app.app_context():
         try:
-            if Service.query.count() > 0 or Job.query.count() > 0:
+            if Service.query.count() > 0 or Job.query.count() > 5:
                 logger.info("Sample data already exists, skipping seed")
                 return
             
             services = [
                 {
                     'title': 'Web Development',
-                    'description': 'Professional web development services using modern technologies',
-                    'short_description': 'Custom websites and web applications',
+                    'description': 'Professional web development services using modern technologies including React, Vue, Angular, Node.js, Python Django/Flask. We build responsive, SEO-optimized, and high-performance web applications.',
+                    'short_description': 'Custom websites and web applications with modern tech stack',
                     'price': 50000,
                     'duration': '2-4 weeks',
                     'icon': 'web',
-                    'features': ['Responsive Design', 'SEO Optimized', 'Fast Loading', 'Secure']
+                    'features': ['Responsive Design', 'SEO Optimized', 'Fast Loading', 'Secure', 'Cross-browser Compatible']
                 },
                 {
                     'title': 'Mobile App Development',
-                    'description': 'Native and hybrid mobile application development',
+                    'description': 'Native and hybrid mobile application development for iOS and Android platforms. Using React Native, Flutter, and native technologies.',
                     'short_description': 'iOS and Android app development',
                     'price': 100000,
                     'duration': '4-8 weeks',
                     'icon': 'mobile',
-                    'features': ['Cross-platform', 'Native Performance', 'Push Notifications']
+                    'features': ['Cross-platform', 'Native Performance', 'Push Notifications', 'Offline Support']
+                },
+                {
+                    'title': 'Digital Marketing',
+                    'description': 'Complete digital marketing solutions including SEO, SEM, social media marketing, content marketing, and email campaigns.',
+                    'short_description': 'SEO, SEM, and social media marketing',
+                    'price': 25000,
+                    'duration': 'Monthly',
+                    'icon': 'marketing',
+                    'features': ['SEO Optimization', 'Social Media Management', 'Content Creation', 'Analytics']
                 }
             ]
             
@@ -2166,6 +1969,18 @@ def seed_sample_data():
                     'job_category': 'government',
                     'salary': '₹5,00,000 - ₹7,00,000',
                     'description': 'Government position for data analysis in state planning department',
+                    'is_approved': True
+                },
+                {
+                    'title': 'Full Stack Developer',
+                    'company': 'Infosys',
+                    'location': 'Hyderabad, Telangana',
+                    'state': 'Telangana',
+                    'city': 'Hyderabad',
+                    'job_type': 'full-time',
+                    'job_category': 'mnc',
+                    'salary': '₹8,00,000 - ₹12,00,000',
+                    'description': 'Seeking full stack developers with expertise in MERN/MEAN stack',
                     'is_approved': True
                 }
             ]
