@@ -96,7 +96,7 @@ db = SQLAlchemy(app)
 # CORS configuration - More permissive for session support
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["http://127.0.0.1:5500", "http://localhost:5500", "https://sridharinternetservice.onrender.com"],
+        "origins": ["https://sridharinternetservice.vercel.app/","http://127.0.0.1:5500", "http://localhost:5500", "https://sridharinternetservice.onrender.com"],
         "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
         "expose_headers": ["X-Total-Count", "X-Page", "X-Per-Page", "Set-Cookie"],
