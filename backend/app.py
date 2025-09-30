@@ -70,14 +70,14 @@ app.config['UPLOAD_EXTENSIONS'] = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 app.config['JSON_SORT_KEYS'] = False
 app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['SESSION_PERMANENT'] = False
+app.config['SESSION_PERMANENT'] = True
 app.config['SESSION_USE_SIGNER'] = True
 app.config['SESSION_KEY_PREFIX'] = 'sridhar_admin:'
 app.config['SESSION_COOKIE_NAME'] = 'sridhar_session'
 app.config['SESSION_COOKIE_DOMAIN'] = None
 app.config['SESSION_COOKIE_PATH'] = '/'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get('PRODUCTION') == 'true'
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to False for development
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
@@ -142,46 +142,6 @@ def requests_retry_session(
     session.mount('https://', adapter)
     return session
 
-class Service(db.Model):
-    __tablename__ = 'services'
-    
-    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    title = db.Column(db.String(200), nullable=False, index=True)
-    slug = db.Column(db.String(250), unique=True, nullable=False, index=True)
-    description = db.Column(db.Text, nullable=False)
-    short_description = db.Column(db.String(300))
-    icon = db.Column(db.String(100))
-    image_url = db.Column(db.String(500))
-    price = db.Column(db.Numeric(10, 2))
-    duration = db.Column(db.String(100))
-    features = db.Column(db.JSON)
-    is_active = db.Column(db.Boolean, default=True, index=True)
-    order = db.Column(db.Integer, default=0, index=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-
-    def to_dict(self, detail=False):
-        data = {
-            'id': str(self.id),
-            'title': self.title,
-            'slug': self.slug,
-            'short_description': self.short_description,
-            'icon': self.icon,
-            'image_url': self.image_url,
-            'price': float(self.price) if self.price else None,
-            'duration': self.duration,
-            'is_active': self.is_active,
-            'created_at': self.created_at.isoformat() if self.created_at else None
-        }
-        if detail:
-            data.update({
-                'description': self.description,
-                'features': self.features or [],
-                'order': self.order,
-                'updated_at': self.updated_at.isoformat() if self.updated_at else None
-            })
-        return data
-
 class Job(db.Model):
     __tablename__ = 'jobs'
     
@@ -190,8 +150,6 @@ class Job(db.Model):
     slug = db.Column(db.String(350), unique=True, nullable=False, index=True)
     company = db.Column(db.String(200), nullable=False, index=True)
     location = db.Column(db.String(200), index=True)
-    state = db.Column(db.String(100), index=True)
-    city = db.Column(db.String(100), index=True)
     job_type = db.Column(db.String(50), index=True)
     job_category = db.Column(db.String(50), index=True)
     salary = db.Column(db.String(100))
@@ -228,8 +186,6 @@ class Job(db.Model):
             'slug': self.slug,
             'company': self.company,
             'location': self.location,
-            'state': self.state,
-            'city': self.city,
             'job_type': self.job_type,
             'job_category': self.job_category,
             'salary': self.salary,
@@ -278,21 +234,6 @@ class JobAnalytics(db.Model):
     user_agent = db.Column(db.String(500))
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
-class ServiceSchema(Schema):
-    class Meta:
-        unknown = EXCLUDE
-    
-    title = fields.Str(required=True, validate=validate.Length(min=3, max=200))
-    description = fields.Str(required=True, validate=validate.Length(min=10))
-    short_description = fields.Str(validate=validate.Length(max=300))
-    icon = fields.Str(validate=validate.Length(max=100))
-    image_url = fields.Url()
-    price = fields.Decimal(as_string=False, places=2)
-    duration = fields.Str(validate=validate.Length(max=100))
-    features = fields.List(fields.Str())
-    is_active = fields.Bool()
-    order = fields.Int()
-
 class JobSchema(Schema):
     class Meta:
         unknown = EXCLUDE
@@ -300,8 +241,6 @@ class JobSchema(Schema):
     title = fields.Str(required=True, validate=validate.Length(min=3, max=300))
     company = fields.Str(required=True, validate=validate.Length(min=2, max=200))
     location = fields.Str(validate=validate.Length(max=200))
-    state = fields.Str(validate=validate.Length(max=100))
-    city = fields.Str(validate=validate.Length(max=100))
     job_type = fields.Str(validate=validate.OneOf([
         'full-time', 'part-time', 'contract', 'freelance', 'internship', 'temporary'
     ]))
@@ -341,44 +280,6 @@ def sanitize_html(text: str) -> str:
     text = re.sub(r'on\w+\s*=\s*["\'][^"\']*["\']', '', text, flags=re.IGNORECASE)
     text = re.sub(r'javascript:', '', text, flags=re.IGNORECASE)
     return text
-
-def extract_location_info(location_str: str) -> Dict[str, Optional[str]]:
-    if not location_str:
-        return {'state': None, 'city': None}
-    
-    location_str = location_str.strip()
-    
-    indian_states = {
-        'telangana': 'Telangana',
-        'andhra pradesh': 'Andhra Pradesh',
-        'ap': 'Andhra Pradesh',
-        'hyderabad': 'Telangana',
-        'visakhapatnam': 'Andhra Pradesh',
-        'vijayawada': 'Andhra Pradesh',
-        'guntur': 'Andhra Pradesh',
-        'tirupati': 'Andhra Pradesh',
-        'warangal': 'Telangana',
-        'nizamabad': 'Telangana',
-        'karimnagar': 'Telangana',
-        'rajahmundry': 'Andhra Pradesh',
-        'nellore': 'Andhra Pradesh',
-        'kurnool': 'Andhra Pradesh',
-        'secunderabad': 'Telangana',
-    }
-    
-    location_lower = location_str.lower()
-    state = None
-    city = None
-    
-    for key, value in indian_states.items():
-        if key in location_lower:
-            state = value
-            if ',' in location_str:
-                parts = [p.strip() for p in location_str.split(',')]
-                city = parts[0] if parts else None
-            break
-    
-    return {'state': state, 'city': city}
 
 def categorize_company(company_name: str) -> str:
     if not company_name:
@@ -540,11 +441,11 @@ def admin_login():
             }), 400
         
         if username == ADMIN_USERNAME and check_password_hash(ADMIN_PASSWORD_HASH, password):
+            session.permanent = True
             session['logged_in'] = True
             session['is_admin'] = True
             session['username'] = username
             session['login_time'] = datetime.utcnow().isoformat()
-            session.permanent = True
             
             logger.info(f"Admin login successful from {get_remote_address()}")
             
@@ -656,15 +557,7 @@ def detailed_health_check():
                 'active_jobs': Job.query.filter_by(is_active=True).count(),
                 'approved_jobs': Job.query.filter_by(is_approved=True).count(),
                 'pending_jobs': Job.query.filter_by(is_approved=False, is_active=True).count(),
-                'total_services': Service.query.count(),
-                'active_services': Service.query.filter_by(is_active=True).count()
             },
-            'jobs_by_state': dict(
-                db.session.query(Job.state, func.count(Job.id))
-                .filter(Job.is_active == True, Job.state.isnot(None))
-                .group_by(Job.state)
-                .all()
-            ),
             'jobs_by_category': dict(
                 db.session.query(Job.job_category, func.count(Job.id))
                 .filter(Job.is_active == True, Job.job_category.isnot(None))
@@ -678,195 +571,6 @@ def detailed_health_check():
         logger.error(f"Detailed health check failed: {e}")
         return jsonify({'error': 'Health check failed', 'message': str(e)}), 500
 
-@app.route('/api/services', methods=['GET'])
-@limiter.limit("200 per hour")
-def get_services():
-    try:
-        page = request.args.get('page', 1, type=int)
-        per_page = min(request.args.get('per_page', 20, type=int), 100)
-        is_active = request.args.get('is_active', type=str)
-        search = request.args.get('search', type=str)
-        
-        query = Service.query
-        
-        if is_active is not None and is_active.lower() in ['true', '1']:
-            query = query.filter_by(is_active=True)
-        
-        if search:
-            search_term = f"%{search}%"
-            query = query.filter(or_(
-                Service.title.ilike(search_term),
-                Service.description.ilike(search_term),
-                Service.short_description.ilike(search_term)
-            ))
-        
-        query = query.order_by(Service.order.asc(), Service.created_at.desc())
-        
-        result = paginate(query, page, per_page)
-        
-        response = jsonify({
-            'success': True,
-            'services': [s.to_dict() for s in result['items']],
-            'pagination': {
-                'page': result['page'],
-                'per_page': result['per_page'],
-                'total': result['total'],
-                'pages': result['pages']
-            }
-        })
-        
-        response.headers['X-Total-Count'] = str(result['total'])
-        return response, 200
-        
-    except Exception as e:
-        logger.error(f"Error fetching services: {e}")
-        return jsonify({'error': 'Failed to fetch services', 'message': str(e)}), 500
-
-@app.route('/api/services/<slug>', methods=['GET'])
-@limiter.limit("200 per hour")
-def get_service(slug):
-    try:
-        service = Service.query.filter_by(slug=slug).first()
-        if not service:
-            return jsonify({
-                'error': 'Not Found',
-                'message': 'Service not found',
-                'status': 404
-            }), 404
-        
-        return jsonify({
-            'success': True,
-            'service': service.to_dict(detail=True)
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error fetching service {slug}: {e}")
-        return jsonify({'error': 'Failed to fetch service', 'message': str(e)}), 500
-
-@app.route('/api/services', methods=['POST'])
-@limiter.limit("30 per hour")
-@require_admin_login
-def create_service():
-    try:
-        schema = ServiceSchema()
-        data = schema.load(request.json)
-        
-        data['title'] = sanitize_html(data['title'])
-        data['description'] = sanitize_html(data['description'])
-        if data.get('short_description'):
-            data['short_description'] = sanitize_html(data['short_description'])
-        
-        slug = generate_slug(data['title'])
-        base_slug = slug
-        counter = 1
-        while Service.query.filter_by(slug=slug).first():
-            slug = f"{base_slug}-{counter}"
-            counter += 1
-        
-        service = Service(slug=slug, **data)
-        
-        db.session.add(service)
-        db.session.commit()
-        
-        logger.info(f"Service created: {service.id} - {service.title}")
-        
-        return jsonify({
-            'success': True,
-            'message': 'Service created successfully',
-            'service': service.to_dict(detail=True)
-        }), 201
-        
-    except ValidationError as e:
-        return jsonify({'error': 'Validation Error', 'messages': e.messages}), 422
-    except IntegrityError as e:
-        db.session.rollback()
-        logger.error(f"Integrity error creating service: {e}")
-        return jsonify({'error': 'Conflict', 'message': 'Service already exists'}), 409
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error creating service: {e}")
-        return jsonify({'error': 'Failed to create service', 'message': str(e)}), 500
-
-@app.route('/api/services/<slug>', methods=['PUT', 'PATCH'])
-@limiter.limit("30 per hour")
-@require_admin_login
-def update_service(slug):
-    try:
-        service = Service.query.filter_by(slug=slug).first()
-        if not service:
-            return jsonify({'error': 'Not Found', 'message': 'Service not found'}), 404
-        
-        schema = ServiceSchema(partial=True)
-        data = schema.load(request.json)
-        
-        if 'title' in data:
-            data['title'] = sanitize_html(data['title'])
-            new_slug = generate_slug(data['title'])
-            if new_slug != service.slug:
-                base_slug = new_slug
-                counter = 1
-                while Service.query.filter(Service.slug == new_slug, Service.id != service.id).first():
-                    new_slug = f"{base_slug}-{counter}"
-                    counter += 1
-                service.slug = new_slug
-        
-        if 'description' in data:
-            data['description'] = sanitize_html(data['description'])
-        
-        if 'short_description' in data and data['short_description']:
-            data['short_description'] = sanitize_html(data['short_description'])
-        
-        for key, value in data.items():
-            if key != 'slug':
-                setattr(service, key, value)
-        
-        service.updated_at = datetime.utcnow()
-        
-        db.session.commit()
-        logger.info(f"Service updated: {service.id} - {service.title}")
-        
-        return jsonify({
-            'success': True,
-            'message': 'Service updated successfully',
-            'service': service.to_dict(detail=True)
-        }), 200
-        
-    except ValidationError as e:
-        return jsonify({'error': 'Validation Error', 'messages': e.messages}), 422
-    except IntegrityError as e:
-        db.session.rollback()
-        logger.error(f"Integrity error updating service: {e}")
-        return jsonify({'error': 'Conflict', 'message': 'Service slug already exists'}), 409
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error updating service: {e}")
-        return jsonify({'error': 'Failed to update service', 'message': str(e)}), 500
-
-@app.route('/api/services/<slug>', methods=['DELETE'])
-@limiter.limit("20 per hour")
-@require_admin_login
-def delete_service(slug):
-    try:
-        service = Service.query.filter_by(slug=slug).first()
-        if not service:
-            return jsonify({'error': 'Not Found', 'message': 'Service not found'}), 404
-        
-        service_title = service.title
-        db.session.delete(service)
-        db.session.commit()
-        
-        logger.info(f"Service deleted: {service_title}")
-        
-        return jsonify({
-            'success': True,
-            'message': 'Service deleted successfully'
-        }), 200
-        
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error deleting service: {e}")
-        return jsonify({'error': 'Failed to delete service', 'message': str(e)}), 500
-
 @app.route('/api/jobs', methods=['GET'])
 @limiter.limit("200 per hour")
 def get_jobs():
@@ -878,8 +582,6 @@ def get_jobs():
         job_type = request.args.get('job_type', type=str)
         job_category = request.args.get('job_category', type=str)
         location = request.args.get('location', type=str)
-        state = request.args.get('state', type=str)
-        city = request.args.get('city', type=str)
         is_remote = request.args.get('is_remote', type=str)
         is_featured = request.args.get('is_featured', type=str)
         search = request.args.get('search', type=str)
@@ -900,12 +602,6 @@ def get_jobs():
         
         if job_category:
             query = query.filter_by(job_category=job_category)
-        
-        if state:
-            query = query.filter(Job.state.ilike(f"%{state}%"))
-        
-        if city:
-            query = query.filter(Job.city.ilike(f"%{city}%"))
         
         if location:
             query = query.filter(Job.location.ilike(f"%{location}%"))
@@ -1002,13 +698,6 @@ def create_job():
         if data.get('benefits'):
             data['benefits'] = sanitize_html(data['benefits'])
         
-        if data.get('location'):
-            loc_info = extract_location_info(data['location'])
-            if not data.get('state'):
-                data['state'] = loc_info['state']
-            if not data.get('city'):
-                data['city'] = loc_info['city']
-        
         if not data.get('job_category'):
             data['job_category'] = categorize_company(data['company'])
         
@@ -1086,13 +775,6 @@ def update_job(slug):
             data['responsibilities'] = sanitize_html(data['responsibilities'])
         if 'benefits' in data:
             data['benefits'] = sanitize_html(data['benefits'])
-        
-        if 'location' in data:
-            loc_info = extract_location_info(data['location'])
-            if not data.get('state'):
-                data['state'] = loc_info['state']
-            if not data.get('city'):
-                data['city'] = loc_info['city']
         
         for key, value in data.items():
             if key != 'slug':
@@ -1207,7 +889,6 @@ def get_pending_jobs():
         per_page = min(request.args.get('per_page', 50, type=int), 100)
         source = request.args.get('source', type=str)
         job_category = request.args.get('job_category', type=str)
-        state = request.args.get('state', type=str)
         
         query = Job.query.filter_by(is_approved=False, is_active=True)
         
@@ -1217,9 +898,6 @@ def get_pending_jobs():
         if job_category:
             query = query.filter_by(job_category=job_category)
         
-        if state:
-            query = query.filter(Job.state.ilike(f"%{state}%"))
-        
         query = query.order_by(Job.created_at.desc())
         
         result = paginate(query, page, per_page)
@@ -1227,8 +905,7 @@ def get_pending_jobs():
         stats = {
             'total_pending': result['total'],
             'by_source': {},
-            'by_category': {},
-            'by_state': {}
+            'by_category': {}
         }
         
         source_stats = db.session.query(
@@ -1246,15 +923,6 @@ def get_pending_jobs():
             Job.job_category.isnot(None)
         ).group_by(Job.job_category).all()
         stats['by_category'] = dict(category_stats)
-        
-        state_stats = db.session.query(
-            Job.state, func.count(Job.id)
-        ).filter(
-            Job.is_approved == False,
-            Job.is_active == True,
-            Job.state.isnot(None)
-        ).group_by(Job.state).all()
-        stats['by_state'] = dict(state_stats)
         
         return jsonify({
             'success': True,
@@ -1417,18 +1085,7 @@ def get_admin_stats():
                     db.session.query(Job.job_type, func.count(Job.id))
                     .filter(Job.job_type.isnot(None))
                     .group_by(Job.job_type).all()
-                ),
-                'by_state': dict(
-                    db.session.query(Job.state, func.count(Job.id))
-                    .filter(Job.state.isnot(None), Job.is_active == True, Job.is_approved == True)
-                    .group_by(Job.state)
-                    .order_by(func.count(Job.id).desc())
-                    .limit(10).all()
                 )
-            },
-            'services': {
-                'total': Service.query.count(),
-                'active': Service.query.filter_by(is_active=True).count()
             },
             'analytics': {
                 'total_views': db.session.query(func.sum(Job.views_count)).scalar() or 0,
@@ -1539,7 +1196,6 @@ def fetch_jobs_from_remotive():
                 slug = f"{base_slug}-{counter}"
                 counter += 1
             
-            loc_info = extract_location_info(location)
             job_category = categorize_company(company)
             
             job = Job(
@@ -1547,8 +1203,6 @@ def fetch_jobs_from_remotive():
                 slug=slug,
                 company=company[:200],
                 location=location[:200],
-                state=loc_info['state'],
-                city=loc_info['city'],
                 job_type=job_data.get('job_type', 'full-time').lower(),
                 job_category=job_category,
                 salary=job_data.get('salary', '')[:100],
@@ -1576,316 +1230,15 @@ def fetch_jobs_from_remotive():
         db.session.rollback()
         return 0
 
-def fetch_jobs_from_arbeitnow():
-    try:
-        session = requests_retry_session()
-        response = session.get('https://www.arbeitnow.com/api/job-board-api', timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        
-        jobs_added = 0
-        for job_data in data.get('data', [])[:20]:
-            external_id = f"arbeitnow_{job_data.get('slug')}"
-            
-            if Job.query.filter_by(external_id=external_id).first():
-                continue
-            
-            title = job_data.get('title', 'Untitled Position')
-            company = job_data.get('company_name', 'Company')
-            location = job_data.get('location', 'Remote')
-            
-            tags = [t.lower() for t in job_data.get('tags', [])]
-            if not ('remote' in tags or 'india' in location.lower()):
-                continue
-            
-            slug = generate_slug(f"{title}-{company}-{job_data.get('slug', '')}")
-            base_slug = slug
-            counter = 1
-            while Job.query.filter_by(slug=slug).first():
-                slug = f"{base_slug}-{counter}"
-                counter += 1
-            
-            loc_info = extract_location_info(location)
-            job_type = 'remote' if 'remote' in tags else 'full-time'
-            job_category = categorize_company(company)
-            
-            job = Job(
-                title=title[:300],
-                slug=slug,
-                company=company[:200],
-                location=location[:200],
-                state=loc_info['state'],
-                city=loc_info['city'],
-                job_type=job_type,
-                job_category=job_category,
-                description=job_data.get('description', 'No description available')[:10000],
-                apply_url=job_data.get('url', ''),
-                external_id=external_id,
-                source='arbeitnow',
-                is_approved=False,
-                is_active=True,
-                is_remote='remote' in tags,
-                expires_at=datetime.utcnow() + timedelta(days=30)
-            )
-            
-            db.session.add(job)
-            jobs_added += 1
-        
-        if jobs_added > 0:
-            db.session.commit()
-            logger.info(f"Added {jobs_added} jobs from Arbeitnow API")
-        
-        return jobs_added
-    except Exception as e:
-        logger.error(f"Error fetching jobs from Arbeitnow: {e}")
-        db.session.rollback()
-        return 0
-
-def fetch_jobs_from_indeed_rss():
-    try:
-        locations = [
-            ('Hyderabad, Telangana', 'Telangana', 'Hyderabad'),
-            ('Vijayawada, Andhra Pradesh', 'Andhra Pradesh', 'Vijayawada'),
-            ('Visakhapatnam, Andhra Pradesh', 'Andhra Pradesh', 'Visakhapatnam'),
-        ]
-        
-        jobs_added = 0
-        
-        for location, state, city in locations:
-            url = f"https://in.indeed.com/rss?q=software+developer&l={quote(location)}"
-            
-            feed = feedparser.parse(url)
-            
-            for entry in feed.entries[:10]:
-                title = entry.get('title', 'Untitled Position')
-                link = entry.get('link', '')
-                description = entry.get('summary', 'No description available')
-                
-                external_id = f"indeed_{hashlib.md5(link.encode()).hexdigest()[:16]}"
-                
-                if Job.query.filter_by(external_id=external_id).first():
-                    continue
-                
-                parts = title.split(' - ')
-                if len(parts) >= 2:
-                    job_title = parts[0].strip()
-                    company = parts[1].strip()
-                else:
-                    job_title = title
-                    company = 'Company'
-                
-                slug = generate_slug(f"{job_title}-{company}-{city}")
-                base_slug = slug
-                counter = 1
-                while Job.query.filter_by(slug=slug).first():
-                    slug = f"{base_slug}-{counter}"
-                    counter += 1
-                
-                job_category = categorize_company(company)
-                
-                job = Job(
-                    title=job_title[:300],
-                    slug=slug,
-                    company=company[:200],
-                    location=location[:200],
-                    state=state,
-                    city=city,
-                    job_type='full-time',
-                    job_category=job_category,
-                    description=description[:10000],
-                    apply_url=link,
-                    external_id=external_id,
-                    source='indeed',
-                    is_approved=False,
-                    is_active=True,
-                    expires_at=datetime.utcnow() + timedelta(days=30)
-                )
-                
-                db.session.add(job)
-                jobs_added += 1
-        
-        if jobs_added > 0:
-            db.session.commit()
-            logger.info(f"Added {jobs_added} jobs from Indeed RSS")
-        
-        return jobs_added
-    except Exception as e:
-        logger.error(f"Error fetching jobs from Indeed RSS: {e}")
-        db.session.rollback()
-        return 0
-
-def fetch_jobs_from_naukri_rss():
-    try:
-        keywords = ['software+developer', 'web+developer', 'data+analyst']
-        locations = [
-            ('Hyderabad/Secunderabad', 'Telangana', 'Hyderabad'),
-            ('Vijayawada', 'Andhra Pradesh', 'Vijayawada'),
-        ]
-        
-        jobs_added = 0
-        
-        for keyword in keywords[:1]:
-            for location, state, city in locations[:1]:
-                url = f"https://www.naukri.com/jobs-in-{location.lower().replace('/', '-')}-rss"
-                
-                try:
-                    feed = feedparser.parse(url)
-                    
-                    for entry in feed.entries[:5]:
-                        title = entry.get('title', 'Untitled Position')
-                        link = entry.get('link', '')
-                        description = entry.get('description', 'No description available')
-                        
-                        external_id = f"naukri_{hashlib.md5(link.encode()).hexdigest()[:16]}"
-                        
-                        if Job.query.filter_by(external_id=external_id).first():
-                            continue
-                        
-                        company = 'Company'
-                        if hasattr(entry, 'author'):
-                            company = entry.author
-                        
-                        slug = generate_slug(f"{title}-{company}-{city}")
-                        base_slug = slug
-                        counter = 1
-                        while Job.query.filter_by(slug=slug).first():
-                            slug = f"{base_slug}-{counter}"
-                            counter += 1
-                        
-                        job_category = categorize_company(company)
-                        
-                        job = Job(
-                            title=title[:300],
-                            slug=slug,
-                            company=company[:200],
-                            location=location[:200],
-                            state=state,
-                            city=city,
-                            job_type='full-time',
-                            job_category=job_category,
-                            description=description[:10000],
-                            apply_url=link,
-                            external_id=external_id,
-                            source='naukri',
-                            is_approved=False,
-                            is_active=True,
-                            expires_at=datetime.utcnow() + timedelta(days=30)
-                        )
-                        
-                        db.session.add(job)
-                        jobs_added += 1
-                        
-                except Exception as feed_error:
-                    logger.warning(f"Error parsing feed {url}: {feed_error}")
-                    continue
-        
-        if jobs_added > 0:
-            db.session.commit()
-            logger.info(f"Added {jobs_added} jobs from Naukri RSS")
-        
-        return jobs_added
-    except Exception as e:
-        logger.error(f"Error fetching jobs from Naukri RSS: {e}")
-        db.session.rollback()
-        return 0
-
-def fetch_govt_jobs():
-    try:
-        jobs_added = 0
-        
-        govt_jobs = [
-            {
-                'title': 'Assistant Professor',
-                'company': 'Telangana State Public Service Commission',
-                'location': 'Hyderabad, Telangana',
-                'description': 'TSPSC invites applications for Assistant Professor positions in various government colleges',
-                'apply_url': 'https://tspsc.gov.in'
-            },
-            {
-                'title': 'Junior Assistant',
-                'company': 'Andhra Pradesh Public Service Commission',
-                'location': 'Vijayawada, Andhra Pradesh',
-                'description': 'APPSC recruitment for Junior Assistant positions',
-                'apply_url': 'https://psc.ap.gov.in'
-            },
-            {
-                'title': 'Police Constable',
-                'company': 'Telangana State Level Police Recruitment Board',
-                'location': 'Across Telangana',
-                'description': 'TSLPRB notification for Police Constable positions',
-                'apply_url': 'https://tslprb.in'
-            }
-        ]
-        
-        for job_data in govt_jobs:
-            unique_str = f"{job_data['title']}_{job_data['company']}"
-            external_id = f"govt_{hashlib.md5(unique_str.encode()).hexdigest()[:16]}"
-            
-            if Job.query.filter_by(external_id=external_id).first():
-                continue
-            
-            loc_info = extract_location_info(job_data['location'])
-            
-            slug = generate_slug(f"{job_data['title']}-{job_data['company']}")
-            base_slug = slug
-            counter = 1
-            while Job.query.filter_by(slug=slug).first():
-                slug = f"{base_slug}-{counter}"
-                counter += 1
-            
-            job = Job(
-                title=job_data['title'][:300],
-                slug=slug,
-                company=job_data['company'][:200],
-                location=job_data['location'][:200],
-                state=loc_info['state'],
-                city=loc_info['city'],
-                job_type='full-time',
-                job_category='government',
-                description=job_data['description'][:10000],
-                apply_url=job_data['apply_url'],
-                external_id=external_id,
-                source='govt_portal',
-                is_approved=False,
-                is_active=True,
-                expires_at=datetime.utcnow() + timedelta(days=60)
-            )
-            
-            db.session.add(job)
-            jobs_added += 1
-        
-        if jobs_added > 0:
-            db.session.commit()
-            logger.info(f"Added {jobs_added} government jobs")
-        
-        return jobs_added
-    except Exception as e:
-        logger.error(f"Error fetching government jobs: {e}")
-        db.session.rollback()
-        return 0
-
 def sync_external_jobs():
     with app.app_context():
         logger.info("Starting external job sync...")
         total_added = 0
         
         try:
-            sources = [
-                ('Remotive', fetch_jobs_from_remotive),
-                ('Arbeitnow', fetch_jobs_from_arbeitnow),
-                ('Indeed RSS', fetch_jobs_from_indeed_rss),
-                ('Naukri RSS', fetch_jobs_from_naukri_rss),
-                ('Government', fetch_govt_jobs)
-            ]
-            
-            for source_name, fetch_func in sources:
-                try:
-                    count = fetch_func()
-                    total_added += count
-                    logger.info(f"Fetched {count} jobs from {source_name}")
-                except Exception as e:
-                    logger.error(f"Error fetching from {source_name}: {e}")
-                    continue
+            count = fetch_jobs_from_remotive()
+            total_added += count
+            logger.info(f"Fetched {count} jobs from Remotive")
             
             logger.info(f"External job sync completed. Total jobs added: {total_added}")
             
@@ -1995,28 +1348,8 @@ scheduler.add_job(
 @require_admin_login
 def trigger_job_sync():
     try:
-        source = request.json.get('source') if request.json else None
-        
-        if source:
-            source_map = {
-                'remotive': fetch_jobs_from_remotive,
-                'arbeitnow': fetch_jobs_from_arbeitnow,
-                'indeed': fetch_jobs_from_indeed_rss,
-                'naukri': fetch_jobs_from_naukri_rss,
-                'government': fetch_govt_jobs
-            }
-            
-            if source not in source_map:
-                return jsonify({
-                    'error': 'Bad Request',
-                    'message': f'Invalid source. Valid sources: {", ".join(source_map.keys())}'
-                }), 400
-            
-            count = source_map[source]()
-            message = f'Synced {count} jobs from {source}'
-        else:
-            count = sync_external_jobs()
-            message = f'Synced {count} jobs from all sources'
+        count = sync_external_jobs()
+        message = f'Synced {count} jobs from external sources'
         
         logger.info(f"Manual job sync triggered: {message}")
         
@@ -2057,9 +1390,6 @@ def export_data():
         if data_type == 'jobs':
             jobs = Job.query.all()
             data = [j.to_dict(detail=True) for j in jobs]
-        elif data_type == 'services':
-            services = Service.query.all()
-            data = [s.to_dict(detail=True) for s in services]
         elif data_type == 'analytics':
             analytics = db.session.query(
                 JobAnalytics.job_id,
@@ -2081,7 +1411,7 @@ def export_data():
         else:
             return jsonify({
                 'error': 'Bad Request',
-                'message': 'Invalid type. Valid types: jobs, services, analytics'
+                'message': 'Invalid type. Valid types: jobs, analytics'
             }), 400
         
         return jsonify({
@@ -2117,11 +1447,6 @@ def index():
                 'logout': '/api/admin/logout',
                 'profile': '/api/admin/profile'
             },
-            'services': {
-                'url': '/api/services',
-                'methods': ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-                'description': 'Service management endpoints'
-            },
             'jobs': {
                 'url': '/api/jobs',
                 'methods': ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
@@ -2138,8 +1463,7 @@ def index():
             }
         },
         'job_sources': [
-            'manual', 'remotive', 'arbeitnow', 'indeed', 
-            'naukri', 'government'
+            'manual', 'remotive'
         ],
         'job_categories': [
             'government', 'private', 'mnc', 'startup', 'public-sector'
@@ -2164,8 +1488,6 @@ def init_db():
             logger.info(f"Existing tables: {existing_tables}")
             
             tables_to_create = []
-            if 'services' not in existing_tables:
-                tables_to_create.append('services')
             if 'jobs' not in existing_tables:
                 tables_to_create.append('jobs')
             if 'job_analytics' not in existing_tables:
@@ -2178,144 +1500,14 @@ def init_db():
             else:
                 logger.info("All required tables already exist")
             
-            with db.engine.connect() as conn:
-                index_queries = [
-                    """CREATE INDEX IF NOT EXISTS idx_jobs_state_city 
-                       ON jobs(state, city)""",
-                    """CREATE INDEX IF NOT EXISTS idx_jobs_category_approved 
-                       ON jobs(job_category, is_approved)""",
-                    """CREATE INDEX IF NOT EXISTS idx_jobs_created_approved 
-                       ON jobs(created_at DESC, is_approved)""",
-                    """CREATE INDEX IF NOT EXISTS idx_jobs_views 
-                       ON jobs(views_count DESC) WHERE views_count IS NOT NULL""",
-                    """CREATE INDEX IF NOT EXISTS idx_analytics_job_event 
-                       ON job_analytics(job_id, event_type)""",
-                    """CREATE INDEX IF NOT EXISTS idx_analytics_created 
-                       ON job_analytics(created_at DESC)""",
-                    """CREATE INDEX IF NOT EXISTS idx_jobs_slug 
-                       ON jobs(slug)""",
-                    """CREATE INDEX IF NOT EXISTS idx_services_slug 
-                       ON services(slug)"""
-                ]
-                
-                for query in index_queries:
-                    try:
-                        conn.execute(db.text(query))
-                        conn.commit()
-                    except Exception as index_error:
-                        logger.debug(f"Index creation skipped: {index_error}")
-                        conn.rollback()
-                        continue
-            
             logger.info("Database initialization completed successfully")
             
         except Exception as e:
             logger.error(f"Error during database initialization: {e}")
             logger.info("Application will continue with existing database structure")
 
-def seed_sample_data():
-    if os.environ.get('FLASK_ENV') != 'development':
-        return
-    
-    with app.app_context():
-        try:
-            if Service.query.count() > 0 or Job.query.count() > 0:
-                logger.info("Sample data already exists, skipping seed")
-                return
-            
-            services = [
-                {
-                    'title': 'Web Development',
-                    'description': 'Professional web development services using modern technologies',
-                    'short_description': 'Custom websites and web applications',
-                    'price': 50000,
-                    'duration': '2-4 weeks',
-                    'icon': 'web',
-                    'features': ['Responsive Design', 'SEO Optimized', 'Fast Loading', 'Secure']
-                },
-                {
-                    'title': 'Mobile App Development',
-                    'description': 'Native and hybrid mobile application development',
-                    'short_description': 'iOS and Android app development',
-                    'price': 100000,
-                    'duration': '4-8 weeks',
-                    'icon': 'mobile',
-                    'features': ['Cross-platform', 'Native Performance', 'Push Notifications']
-                }
-            ]
-            
-            for service_data in services:
-                service = Service(
-                    title=service_data['title'],
-                    slug=generate_slug(service_data['title']),
-                    description=service_data['description'],
-                    short_description=service_data['short_description'],
-                    price=service_data['price'],
-                    duration=service_data['duration'],
-                    icon=service_data['icon'],
-                    features=service_data['features'],
-                    is_active=True
-                )
-                db.session.add(service)
-            
-            jobs = [
-                {
-                    'title': 'Senior Software Engineer',
-                    'company': 'Tech Mahindra',
-                    'location': 'Hyderabad, Telangana',
-                    'state': 'Telangana',
-                    'city': 'Hyderabad',
-                    'job_type': 'full-time',
-                    'job_category': 'mnc',
-                    'salary': '₹10,00,000 - ₹15,00,000',
-                    'description': 'Looking for experienced software engineers with 5+ years of experience in Java/Python',
-                    'is_approved': True
-                },
-                {
-                    'title': 'Data Analyst',
-                    'company': 'Andhra Pradesh State Government',
-                    'location': 'Vijayawada, Andhra Pradesh',
-                    'state': 'Andhra Pradesh',
-                    'city': 'Vijayawada',
-                    'job_type': 'full-time',
-                    'job_category': 'government',
-                    'salary': '₹5,00,000 - ₹7,00,000',
-                    'description': 'Government position for data analysis in state planning department',
-                    'is_approved': True
-                }
-            ]
-            
-            for job_data in jobs:
-                job = Job(
-                    title=job_data['title'],
-                    slug=generate_slug(f"{job_data['title']}-{job_data['company']}"),
-                    company=job_data['company'],
-                    location=job_data['location'],
-                    state=job_data['state'],
-                    city=job_data['city'],
-                    job_type=job_data['job_type'],
-                    job_category=job_data['job_category'],
-                    salary=job_data['salary'],
-                    description=job_data['description'],
-                    is_approved=job_data['is_approved'],
-                    is_active=True,
-                    source='manual',
-                    expires_at=datetime.utcnow() + timedelta(days=30)
-                )
-                db.session.add(job)
-            
-            db.session.commit()
-            logger.info("Sample data seeded successfully")
-            
-        except Exception as e:
-            logger.error(f"Error seeding sample data: {e}")
-            db.session.rollback()
-
 if __name__ == '__main__':
     init_db()
-    
-    if os.environ.get('FLASK_ENV') == 'development':
-        seed_sample_data()
     
     try:
         scheduler.start()
