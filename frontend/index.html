@@ -3,414 +3,1712 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Our Services - Sridhar Chary & Shiva Services</title>
-    
-    <!-- Bootstrap 5 CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Custom CSS -->
-    <link rel="stylesheet" href="css/style.css">
-    
-    <!-- Font Awesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- AOS Animation -->
-    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+    <title>Sridhar Internet Services - Job Portal Admin</title>
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --primary-hover: #1d4ed8;
+            --secondary-color: #64748b;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --danger-color: #ef4444;
+            --background: #ffffff;
+            --surface: #f8fafc;
+            --surface-2: #f1f5f9;
+            --text-primary: #0f172a;
+            --text-secondary: #64748b;
+            --border: #e2e8f0;
+            --border-light: #f1f5f9;
+            --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+            --radius: 8px;
+            --radius-lg: 12px;
+        }
+
+        [data-theme="dark"] {
+            --background: #0f172a;
+            --surface: #1e293b;
+            --surface-2: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --border: #334155;
+            --border-light: #475569;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: var(--background);
+            color: var(--text-primary);
+            line-height: 1.6;
+            transition: background-color 0.2s, color 0.2s;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+
+        /* Header */
+        .header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(10px);
+        }
+
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .theme-toggle {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 0.5rem;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .theme-toggle:hover {
+            background: var(--surface-2);
+        }
+
+        /* Navigation */
+        .nav {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0.5rem 0;
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .nav-btn {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 0.5rem 1rem;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.875rem;
+        }
+
+        .nav-btn:hover, .nav-btn.active {
+            background: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .form-input, .form-select, .form-textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--background);
+            color: var(--text-primary);
+            font-size: 0.875rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgb(37 99 235 / 0.1);
+        }
+
+        .form-textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: var(--radius);
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+
+        .btn-primary {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+        }
+
+        .btn-secondary {
+            background: var(--surface-2);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+
+        .btn-success {
+            background: var(--success-color);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--danger-color);
+            color: white;
+        }
+
+        .btn-sm {
+            padding: 0.5rem 1rem;
+            font-size: 0.75rem;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-2);
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .card-body {
+            padding: 1.5rem;
+        }
+
+        .card-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border);
+            background: var(--surface-2);
+        }
+
+        /* Grid */
+        .grid {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .grid-cols-1 { grid-template-columns: 1fr; }
+        .grid-cols-2 { grid-template-columns: repeat(2, 1fr); }
+        .grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
+
+        @media (max-width: 1024px) {
+            .grid-cols-3 { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        @media (max-width: 768px) {
+            .grid-cols-2, .grid-cols-3 { grid-template-columns: 1fr; }
+        }
+
+        /* Job Card */
+        .job-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .job-card:hover {
+            box-shadow: var(--shadow-lg);
+            border-color: var(--primary-color);
+        }
+
+        .job-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .job-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+            color: var(--text-primary);
+        }
+
+        .job-company {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .job-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin: 1rem 0;
+        }
+
+        .badge {
+            background: var(--primary-color);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .badge-success { background: var(--success-color); }
+        .badge-warning { background: var(--warning-color); }
+        .badge-danger { background: var(--danger-color); }
+        .badge-secondary { background: var(--secondary-color); }
+
+        /* Filters */
+        .filters {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .filters-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            align-items: end;
+        }
+
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.5rem;
+            margin: 2rem 0;
+        }
+
+        .pagination-btn {
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-primary);
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .pagination-btn:hover, .pagination-btn.active {
+            background: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+
+        .pagination-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal {
+            background: var(--background);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-lg);
+            max-width: 800px;
+            width: 90vw;
+            max-height: 90vh;
+            overflow-y: auto;
+            transform: scale(0.9);
+            transition: transform 0.2s;
+        }
+
+        .modal-overlay.active .modal {
+            transform: scale(1);
+        }
+
+        .modal-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        .modal-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+            gap: 1rem;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--text-secondary);
+            width: 2rem;
+            height: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius);
+        }
+
+        .close-btn:hover {
+            background: var(--surface-2);
+        }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem;
+        }
+
+        .spinner {
+            width: 2rem;
+            height: 2rem;
+            border: 2px solid var(--border);
+            border-top: 2px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Alerts */
+        .alert {
+            padding: 1rem;
+            border-radius: var(--radius);
+            margin-bottom: 1rem;
+            border: 1px solid;
+        }
+
+        .alert-success {
+            background: rgb(16 185 129 / 0.1);
+            color: var(--success-color);
+            border-color: var(--success-color);
+        }
+
+        .alert-danger {
+            background: rgb(239 68 68 / 0.1);
+            color: var(--danger-color);
+            border-color: var(--danger-color);
+        }
+
+        .alert-warning {
+            background: rgb(245 158 11 / 0.1);
+            color: var(--warning-color);
+            border-color: var(--warning-color);
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        /* Table */
+        .table-container {
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--surface);
+        }
+
+        .table th,
+        .table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .table th {
+            background: var(--surface-2);
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .table tr:hover {
+            background: var(--surface-2);
+        }
+
+        /* Checkbox */
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .checkbox {
+            width: 1rem;
+            height: 1rem;
+            accent-color: var(--primary-color);
+        }
+
+        /* Utilities */
+        .hidden { display: none !important; }
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .mb-2 { margin-bottom: 0.5rem; }
+        .mb-4 { margin-bottom: 1rem; }
+        .mt-4 { margin-top: 1rem; }
+        .flex { display: flex; }
+        .items-center { align-items: center; }
+        .justify-between { justify-content: space-between; }
+        .gap-2 { gap: 0.5rem; }
+        .gap-4 { gap: 1rem; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 0.5rem;
+            }
+            
+            .header-content {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .nav-buttons {
+                justify-content: center;
+            }
+            
+            .modal {
+                width: 95vw;
+            }
+        }
+    </style>
 </head>
-<body class="bg-gray-50">
-    <!-- Navigation (Same as index.html) -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-gradient-to-r from-blue-600 to-purple-600 sticky-top">
+<body>
+    <!-- Header -->
+    <header class="header">
         <div class="container">
-            <a class="navbar-brand fw-bold" href="/">
-                <i class="fas fa-store me-2"></i>
-                Sridhar Chary & Shiva Services
-            </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="/">Home</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link active" href="/services.html">Services</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/jobs.html">Job Alerts</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/contact.html">Contact</a>
-                    </li>
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" id="loginDropdown" role="button" data-bs-toggle="dropdown">
-                            <i class="fas fa-user-circle"></i> Login
-                        </a>
-                        <ul class="dropdown-menu dropdown-menu-end">
-                            <li><a class="dropdown-item" href="/admin.html">Admin Login</a></li>
-                            <li><a class="dropdown-item" href="/manager.html">Manager Login</a></li>
-                        </ul>
-                    </li>
-                </ul>
+            <div class="header-content">
+                <a href="#" class="logo">Sridhar Internet Services</a>
+                <div class="header-actions">
+                    <div id="admin-status" class="text-sm"></div>
+                    <button class="theme-toggle" onclick="toggleTheme()">🌙</button>
+                    <button id="login-btn" class="btn btn-primary" onclick="showLoginModal()">Admin Login</button>
+                    <button id="logout-btn" class="btn btn-secondary hidden" onclick="logout()">Logout</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Navigation -->
+    <nav class="nav">
+        <div class="container">
+            <div class="nav-buttons">
+                <button class="nav-btn active" onclick="showSection('jobs')">Browse Jobs</button>
+                <button class="nav-btn" onclick="showSection('health')">API Health</button>
+                <button id="admin-nav" class="nav-btn hidden" onclick="showSection('admin')">Admin Dashboard</button>
+                <button id="pending-nav" class="nav-btn hidden" onclick="showSection('pending')">Pending Jobs</button>
+                <button id="create-nav" class="nav-btn hidden" onclick="showSection('create')">Create Job</button>
+                <button id="stats-nav" class="nav-btn hidden" onclick="showSection('stats')">Statistics</button>
             </div>
         </div>
     </nav>
 
-    <!-- Page Header -->
-    <section class="bg-gradient-to-r from-blue-600 to-purple-600 text-white py-5">
-        <div class="container">
-            <h1 class="display-4 fw-bold text-center" data-aos="fade-up">Our Services</h1>
-            <p class="lead text-center" data-aos="fade-up" data-aos-delay="100">
-                Comprehensive digital solutions for all your needs
-            </p>
-        </div>
-    </section>
+    <main class="container" style="margin-top: 2rem;">
+        <!-- Alert Container -->
+        <div id="alert-container"></div>
 
-    <!-- Services Section -->
-    <section class="py-5">
-        <div class="container">
-            <!-- Google Ads Banner -->
-            <div class="google-ad-banner mb-5 text-center bg-gray-200 p-4 rounded" data-ad-type="banner">
-                <p class="text-muted">Advertisement</p>
-            </div>
-
-            <!-- Insurance Services -->
-            <div id="insurance" class="service-category mb-5" data-aos="fade-up">
-                <h2 class="h3 mb-4 text-primary">
-                    <i class="fas fa-shield-alt me-2"></i>Insurance Services
-                </h2>
-                <div class="row g-4">
-                    <div class="col-md-6">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
-                            <div class="card-body">
-                                <h5 class="card-title">LIC Insurance Advisory</h5>
-                                <ul class="list-unstyled">
-                                    <li><i class="fas fa-check text-success me-2"></i>Policy consultation</li>
-                                    <li><i class="fas fa-check text-success me-2"></i>Premium payment assistance</li>
-                                    <li><i class="fas fa-check text-success me-2"></i>Claim support</li>
-                                    <li><i class="fas fa-check text-success me-2"></i>Policy renewal reminders</li>
-                                </ul>
-                            </div>
-                        </div>
+        <!-- Jobs Section -->
+        <section id="jobs-section" class="section">
+            <!-- Filters -->
+            <div class="filters">
+                <div class="filters-grid">
+                    <div class="form-group">
+                        <label class="form-label">Search</label>
+                        <input type="text" id="search-input" class="form-input" placeholder="Search jobs...">
                     </div>
-                    <div class="col-md-6">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
-                            <div class="card-body">
-                                <h5 class="card-title">Health & Vehicle Insurance</h5>
-                                <ul class="list-unstyled">
-                                    <li><i class="fas fa-check text-success me-2"></i>Health insurance plans</li>
-                                    <li><i class="fas fa-check text-success me-2"></i>Vehicle insurance renewal</li>
-                                    <li><i class="fas fa-check text-success me-2"></i>Comparison services</li>
-                                    <li><i class="fas fa-check text-success me-2"></i>Quick claim processing</li>
-                                </ul>
-                            </div>
-                        </div>
+                    <div class="form-group">
+                        <label class="form-label">Category</label>
+                        <select id="category-filter" class="form-select">
+                            <option value="">All Categories</option>
+                            <option value="government">Government</option>
+                            <option value="private">Private</option>
+                            <option value="mnc">MNC</option>
+                            <option value="startup">Startup</option>
+                            <option value="public-sector">Public Sector</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Job Type</label>
+                        <select id="type-filter" class="form-select">
+                            <option value="">All Types</option>
+                            <option value="full-time">Full Time</option>
+                            <option value="part-time">Part Time</option>
+                            <option value="contract">Contract</option>
+                            <option value="freelance">Freelance</option>
+                            <option value="internship">Internship</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Location</label>
+                        <input type="text" id="location-filter" class="form-input" placeholder="Location...">
+                    </div>
+                    <div class="form-group">
+                        <button class="btn btn-primary" onclick="filterJobs()">Filter</button>
                     </div>
                 </div>
             </div>
 
-            <!-- Financial Services -->
-            <div id="money" class="service-category mb-5" data-aos="fade-up">
-                <h2 class="h3 mb-4 text-success">
-                    <i class="fas fa-money-bill-wave me-2"></i>Financial Services
-                </h2>
-                <div class="row g-4">
-                    <div class="col-md-4">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
-                            <div class="card-body text-center">
-                                <i class="fas fa-exchange-alt fa-3x text-success mb-3"></i>
-                                <h5 class="card-title">Money Transfer</h5>
-                                <p class="card-text">Secure domestic and international money transfers</p>
-                            </div>
+            <!-- Jobs Grid -->
+            <div id="jobs-grid" class="grid grid-cols-1"></div>
+
+            <!-- Pagination -->
+            <div id="jobs-pagination" class="pagination"></div>
+        </section>
+
+        <!-- Health Section -->
+        <section id="health-section" class="section hidden">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">API Health Status</h2>
+                </div>
+                <div class="card-body">
+                    <button class="btn btn-primary mb-4" onclick="checkHealth()">Check Health</button>
+                    <div id="health-result"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Admin Dashboard -->
+        <section id="admin-section" class="section hidden">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="total-jobs">0</div>
+                    <div class="stat-label">Total Jobs</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="approved-jobs">0</div>
+                    <div class="stat-label">Approved Jobs</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="pending-jobs">0</div>
+                    <div class="stat-label">Pending Jobs</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="total-views">0</div>
+                    <div class="stat-label">Total Views</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Quick Actions</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="flex gap-2">
+                            <button class="btn btn-primary" onclick="syncJobs()">Sync External Jobs</button>
+                            <button class="btn btn-secondary" onclick="cleanupJobs()">Cleanup Jobs</button>
                         </div>
                     </div>
-                    <div class="col-md-4">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
-                            <div class="card-body text-center">
-                                <i class="fas fa-credit-card fa-3x text-success mb-3"></i>
-                                <h5 class="card-title">ATM Services</h5>
-                                <p class="card-text">Cash withdrawal and deposit assistance</p>
-                            </div>
-                        </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Export Data</h3>
                     </div>
-                    <div class="col-md-4">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
-                            <div class="card-body text-center">
-                                <i class="fas fa-university fa-3x text-success mb-3"></i>
-                                <h5 class="card-title">Banking Support</h5>
-                                <p class="card-text">Account opening and banking documentation</p>
-                            </div>
+                    <div class="card-body">
+                        <div class="flex gap-2">
+                            <button class="btn btn-secondary" onclick="exportData('jobs')">Export Jobs</button>
+                            <button class="btn btn-secondary" onclick="exportData('analytics')">Export Analytics</button>
                         </div>
                     </div>
                 </div>
             </div>
+        </section>
 
-            <!-- Government Services -->
-            <div id="govt" class="service-category mb-5" data-aos="fade-up">
-                <h2 class="h3 mb-4 text-info">
-                    <i class="fas fa-landmark me-2"></i>Government Services
-                </h2>
-                <div class="row g-4">
-                    <div class="col-lg-3 col-md-6">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
-                            <div class="card-body">
-                                <i class="fas fa-id-card fa-2x text-info mb-3"></i>
-                                <h6 class="card-title">PAN Card</h6>
-                                <small>New application, corrections, reprint</small>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-lg-3 col-md-6">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
-                            <div class="card-body">
-                                <i class="fas fa-fingerprint fa-2x text-info mb-3"></i>
-                                <h6 class="card-title">Aadhaar Services</h6>
-                                <small>Update, enrollment, download</small>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-lg-3 col-md-6">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
-                            <div class="card-body">
-                                <i class="fas fa-piggy-bank fa-2x text-info mb-3"></i>
-                                <h6 class="card-title">PF Services</h6>
-                                <small>Withdrawal, transfer, KYC update</small>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-lg-3 col-md-6">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
-                            <div class="card-body">
-                                <i class="fas fa-file-alt fa-2x text-info mb-3"></i>
-                                <h6 class="card-title">Job Applications</h6>
-                                <small>Form filling, result checking</small>
-                            </div>
+        <!-- Pending Jobs Section -->
+        <section id="pending-section" class="section hidden">
+            <div class="card">
+                <div class="card-header">
+                    <div class="flex justify-between items-center">
+                        <h2 class="card-title">Pending Jobs</h2>
+                        <div class="flex gap-2">
+                            <button class="btn btn-success btn-sm" onclick="bulkApprove()">Bulk Approve</button>
+                            <button class="btn btn-danger btn-sm" onclick="bulkReject()">Bulk Reject</button>
                         </div>
                     </div>
                 </div>
-            </div>
-
-            <!-- Booking Services -->
-            <div id="booking" class="service-category mb-5" data-aos="fade-up">
-                <h2 class="h3 mb-4 text-warning">
-                    <i class="fas fa-ticket-alt me-2"></i>Booking Services
-                </h2>
-                <div class="row g-4">
-                    <div class="col-md-6">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow bg-gradient-to-br from-yellow-50 to-orange-50">
-                            <div class="card-body">
-                                <h5 class="card-title">
-                                    <i class="fas fa-bus me-2"></i>Bus Booking
-                                </h5>
-                                <p>TSRTC, APSRTC, and private bus bookings</p>
-                                <ul class="list-unstyled small">
-                                    <li>• Seat selection assistance</li>
-                                    <li>• Group bookings</li>
-                                    <li>• Cancellation support</li>
-                                </ul>
-                            </div>
-                        </div>
+                <div class="card-body">
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>
+                                        <input type="checkbox" class="checkbox" id="select-all" onchange="toggleSelectAll()">
+                                    </th>
+                                    <th>Title</th>
+                                    <th>Company</th>
+                                    <th>Category</th>
+                                    <th>Source</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pending-jobs-table">
+                            </tbody>
+                        </table>
                     </div>
-                    <div class="col-md-6">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow bg-gradient-to-br from-blue-50 to-indigo-50">
-                            <div class="card-body">
-                                <h5 class="card-title">
-                                    <i class="fas fa-plane me-2"></i>Flight Booking
-                                </h5>
-                                <p>Domestic and international flight tickets</p>
-                                <ul class="list-unstyled small">
-                                    <li>• Best fare search</li>
-                                    <li>• Web check-in assistance</li>
-                                    <li>• Rescheduling help</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
+                    <div id="pending-pagination" class="pagination"></div>
                 </div>
             </div>
+        </section>
 
-            <!-- Bill Payment Services -->
-            <div id="bills" class="service-category mb-5" data-aos="fade-up">
-                <h2 class="h3 mb-4 text-danger">
-                    <i class="fas fa-file-invoice-dollar me-2"></i>Bill Payment Services
-                </h2>
-                <div class="row g-4">
-                    <div class="col-lg-3 col-md-6">
-                        <div class="list-group">
-                            <div class="list-group-item">
-                                <i class="fas fa-tv me-2 text-danger"></i>DTH Recharge
+        <!-- Create Job Section -->
+        <section id="create-section" class="section hidden">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Create New Job</h2>
+                </div>
+                <div class="card-body">
+                    <form id="job-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Job Title *</label>
+                                <input type="text" name="title" class="form-input" required>
                             </div>
-                            <div class="list-group-item">
-                                <i class="fas fa-fire me-2 text-danger"></i>Gas Bill Payment
-                            </div>
-                            <div class="list-group-item">
-                                <i class="fas fa-bolt me-2 text-danger"></i>Electricity Bill
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-lg-3 col-md-6">
-                        <div class="list-group">
-                            <div class="list-group-item">
-                                <i class="fas fa-water me-2 text-danger"></i>Water Bill
-                            </div>
-                            <div class="list-group-item">
-                                <i class="fas fa-mobile-alt me-2 text-danger"></i>Mobile Recharge
-                            </div>
-                            <div class="list-group-item">
-                                <i class="fas fa-credit-card me-2 text-danger"></i>Credit Card Bill
+                            <div class="form-group">
+                                <label class="form-label">Company *</label>
+                                <input type="text" name="company" class="form-input" required>
                             </div>
                         </div>
-                    </div>
-                    <div class="col-lg-6">
-                        <div class="alert alert-info">
-                            <h6 class="alert-heading">Quick & Secure Payments</h6>
-                            <p class="mb-0">All bill payments are processed instantly with secure payment gateways. Get instant confirmation and receipts.</p>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Location</label>
+                                <input type="text" name="location" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Job Type</label>
+                                <select name="job_type" class="form-select">
+                                    <option value="full-time">Full Time</option>
+                                    <option value="part-time">Part Time</option>
+                                    <option value="contract">Contract</option>
+                                    <option value="freelance">Freelance</option>
+                                    <option value="internship">Internship</option>
+                                </select>
+                            </div>
                         </div>
-                    </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Category</label>
+                                <select name="job_category" class="form-select">
+                                    <option value="government">Government</option>
+                                    <option value="private">Private</option>
+                                    <option value="mnc">MNC</option>
+                                    <option value="startup">Startup</option>
+                                    <option value="public-sector">Public Sector</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Salary</label>
+                                <input type="text" name="salary" class="form-input" placeholder="e.g., ₹5-10 LPA">
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Description *</label>
+                            <textarea name="description" class="form-textarea" rows="5" required></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Requirements</label>
+                            <textarea name="requirements" class="form-textarea" rows="3"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Responsibilities</label>
+                            <textarea name="responsibilities" class="form-textarea" rows="3"></textarea>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Apply URL</label>
+                                <input type="url" name="apply_url" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Apply Email</label>
+                                <input type="email" name="apply_email" class="form-input">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="checkbox-group">
+                                    <input type="checkbox" name="is_remote" class="checkbox">
+                                    Remote Job
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-group">
+                                    <input type="checkbox" name="is_featured" class="checkbox">
+                                    Featured Job
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="flex justify-end gap-2">
+                            <button type="button" class="btn btn-secondary" onclick="resetForm()">Reset</button>
+                            <button type="submit" class="btn btn-primary">Create Job</button>
+                        </div>
+                    </form>
                 </div>
             </div>
+        </section>
 
-            <!-- Document Services -->
-            <div id="documents" class="service-category mb-5" data-aos="fade-up">
-                <h2 class="h3 mb-4 text-purple">
-                    <i class="fas fa-print me-2"></i>Document & Printing Services
-                </h2>
-                <div class="row g-4">
-                    <div class="col-md-4">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
-                            <div class="card-body">
-                                <h5 class="card-title">Printing Services</h5>
-                                <ul class="list-unstyled">
-                                    <li>✓ Black & White printing</li>
-                                    <li>✓ Color printing</li>
-                                    <li>✓ Bulk printing</li>
-                                    <li>✓ Photo printing</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-4">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
-                            <div class="card-body">
-                                <h5 class="card-title">Scanning & Lamination</h5>
-                                <ul class="list-unstyled">
-                                    <li>✓ Document scanning</li>
-                                    <li>✓ PDF conversion</li>
-                                    <li>✓ Lamination (all sizes)</li>
-                                    <li>✓ Binding services</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-4">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow">
-                            <div class="card-body">
-                                <h5 class="card-title">Typing & Documentation</h5>
-                                <ul class="list-unstyled">
-                                    <li>✓ Telugu typing</li>
-                                    <li>✓ English typing</li>
-                                    <li>✓ Resume creation</li>
-                                    <li>✓ Letter drafting</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
+        <!-- Statistics Section -->
+        <section id="stats-section" class="section hidden">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Detailed Statistics</h2>
+                </div>
+                <div class="card-body">
+                    <button class="btn btn-primary mb-4" onclick="loadDetailedStats()">Refresh Stats</button>
+                    <div id="detailed-stats"></div>
                 </div>
             </div>
+        </section>
+    </main>
 
-            <!-- Special Services -->
-            <div class="service-category mb-5" data-aos="fade-up">
-                <h2 class="h3 mb-4 text-secondary">
-                    <i class="fas fa-star me-2"></i>Special Services
-                </h2>
-                <div class="row g-4">
-                    <div class="col-md-6">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow border-primary">
-                            <div class="card-body">
-                                <h5 class="card-title text-primary">Project Reports</h5>
-                                <p>Professional project report preparation</p>
-                                <div class="d-flex flex-wrap gap-2">
-                                    <span class="badge bg-primary">Excel Reports</span>
-                                    <span class="badge bg-success">PowerPoint Presentations</span>
-                                    <span class="badge bg-info">Word Documents</span>
-                                    <span class="badge bg-warning">Data Analysis</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card h-100 shadow-sm hover:shadow-lg transition-shadow border-success">
-                            <div class="card-body">
-                                <h5 class="card-title text-success">Vehicle & Sand Booking</h5>
-                                <p>Special booking services for vehicles and construction materials</p>
-                                <div class="d-flex flex-wrap gap-2">
-                                    <span class="badge bg-secondary">Vehicle Registration</span>
-                                    <span class="badge bg-dark">Sand Booking</span>
-                                    <span class="badge bg-danger">Transport Permits</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+    <!-- Login Modal -->
+    <div id="login-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Admin Login</h3>
+                <button class="close-btn" onclick="hideLoginModal()">&times;</button>
             </div>
-
-            <!-- Pricing Info -->
-            <div class="alert alert-success text-center" data-aos="fade-up">
-                <h4 class="alert-heading">Affordable Pricing</h4>
-                <p class="mb-0">All services are offered at competitive rates with no hidden charges. Visit our center for detailed pricing information.</p>
-            </div>
-
-            <!-- Google Ads Sidebar -->
-            <div class="google-ad-banner mt-5 text-center bg-gray-200 p-4 rounded" data-ad-type="sidebar">
-                <p class="text-muted">Advertisement</p>
+            <div class="modal-body">
+                <form id="login-form">
+                    <div class="form-group">
+                        <label class="form-label">Username</label>
+                        <input type="text" name="username" class="form-input" required value="admin">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Password</label>
+                        <input type="password" name="password" class="form-input" required value="admin123">
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button type="button" class="btn btn-secondary" onclick="hideLoginModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Login</button>
+                    </div>
+                </form>
             </div>
         </div>
-    </section>
+    </div>
 
-    <!-- CTA Section -->
-    <section class="py-5 bg-gradient-to-r from-purple-600 to-blue-600 text-white">
-        <div class="container text-center">
-            <h2 class="mb-4">Ready to Get Started?</h2>
-            <p class="lead mb-4">Visit our center or call us for immediate assistance</p>
-            <div class="d-flex justify-content-center gap-3">
-                <a href="tel:9160037232" class="btn btn-light btn-lg">
-                    <i class="fas fa-phone me-2"></i>Call Now
-                </a>
-                <a href="/contact.html" class="btn btn-outline-light btn-lg">
-                    <i class="fas fa-map-marker-alt me-2"></i>Get Directions
-                </a>
+    <!-- Job Detail Modal -->
+    <div id="job-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="job-modal-title">Job Details</h3>
+                <button class="close-btn" onclick="hideJobModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="job-modal-content">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideJobModal()">Close</button>
             </div>
         </div>
-    </section>
+    </div>
 
-    <!-- Footer -->
-    <footer class="bg-dark text-white py-4">
-        <div class="container">
-            <div class="row">
-                <div class="col-md-6">
-                    <h5>Sridhar Chary & Shiva Services</h5>
-                    <p class="mb-0">Your trusted partner for all digital services</p>
-                </div>
-                <div class="col-md-6 text-md-end">
-                    <p class="mb-0">© 2024 All rights reserved</p>
-                    <p>Mobile: 9160037232</p>
-                </div>
-            </div>
-        </div>
-    </footer>
-
-    <!-- Scripts -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
     <script>
-        AOS.init({
-            duration: 800,
-            once: true
+        // Configuration
+        const API_BASE = 'https://sridharinternetservice.onrender.com/api';
+        
+        // State
+        let currentSection = 'jobs';
+        let currentPage = 1;
+        let isLoggedIn = false;
+        let selectedJobs = new Set();
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            checkAuthStatus();
+            loadJobs();
+            
+            // Event listeners
+            document.getElementById('login-form').addEventListener('submit', handleLogin);
+            document.getElementById('job-form').addEventListener('submit', handleCreateJob);
+            
+            // Search on Enter
+            document.getElementById('search-input').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    filterJobs();
+                }
+            });
         });
+
+        // Theme Toggle
+        function toggleTheme() {
+            const body = document.body;
+            const currentTheme = body.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            
+            body.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            
+            const themeBtn = document.querySelector('.theme-toggle');
+            themeBtn.textContent = newTheme === 'dark' ? '☀️' : '🌙';
+        }
+
+        // Load saved theme
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme) {
+            document.body.setAttribute('data-theme', savedTheme);
+            document.querySelector('.theme-toggle').textContent = savedTheme === 'dark' ? '☀️' : '🌙';
+        }
+
+        // Utility Functions
+        function showAlert(message, type = 'success') {
+            const container = document.getElementById('alert-container');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+            
+            container.appendChild(alert);
+            
+            setTimeout(() => {
+                alert.remove();
+            }, 5000);
+        }
+
+        function showLoading(containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        }
+
+        function formatDate(dateString) {
+            return new Date(dateString).toLocaleDateString('en-IN', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            });
+        }
+
+        // API Functions
+        async function apiCall(endpoint, options = {}) {
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, {
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    },
+                    ...options
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.message || `HTTP error! status: ${response.status}`);
+                }
+
+                return data;
+            } catch (error) {
+                console.error('API call error:', error);
+                throw error;
+            }
+        }
+
+        // Auth Functions
+        async function checkAuthStatus() {
+            try {
+                const data = await apiCall('/admin/profile');
+                if (data.success) {
+                    isLoggedIn = true;
+                    updateAuthUI(data.admin);
+                }
+            } catch (error) {
+                isLoggedIn = false;
+                updateAuthUI(null);
+            }
+        }
+
+        function updateAuthUI(admin) {
+            const loginBtn = document.getElementById('login-btn');
+            const logoutBtn = document.getElementById('logout-btn');
+            const adminStatus = document.getElementById('admin-status');
+            const adminNavs = ['admin-nav', 'pending-nav', 'create-nav', 'stats-nav'];
+
+            if (admin) {
+                loginBtn.classList.add('hidden');
+                logoutBtn.classList.remove('hidden');
+                adminStatus.textContent = `Welcome, ${admin.username}`;
+                adminNavs.forEach(id => document.getElementById(id).classList.remove('hidden'));
+            } else {
+                loginBtn.classList.remove('hidden');
+                logoutBtn.classList.add('hidden');
+                adminStatus.textContent = '';
+                adminNavs.forEach(id => document.getElementById(id).classList.add('hidden'));
+            }
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const credentials = Object.fromEntries(formData);
+
+            try {
+                const data = await apiCall('/admin/login', {
+                    method: 'POST',
+                    body: JSON.stringify(credentials)
+                });
+
+                if (data.success) {
+                    isLoggedIn = true;
+                    updateAuthUI(data.admin);
+                    hideLoginModal();
+                    showAlert('Login successful!');
+                }
+            } catch (error) {
+                showAlert(error.message, 'danger');
+            }
+        }
+
+        async function logout() {
+            try {
+                await apiCall('/admin/logout', { method: 'POST' });
+                isLoggedIn = false;
+                updateAuthUI(null);
+                showSection('jobs');
+                showAlert('Logged out successfully!');
+            } catch (error) {
+                showAlert(error.message, 'danger');
+            }
+        }
+
+        // Modal Functions
+        function showLoginModal() {
+            document.getElementById('login-modal').classList.add('active');
+        }
+
+        function hideLoginModal() {
+            document.getElementById('login-modal').classList.remove('active');
+        }
+
+        function showJobModal(job) {
+            const modal = document.getElementById('job-modal');
+            const title = document.getElementById('job-modal-title');
+            const content = document.getElementById('job-modal-content');
+
+            title.textContent = job.title;
+            content.innerHTML = `
+                <div class="mb-4">
+                    <h4 class="mb-2">Company: ${job.company}</h4>
+                    <div class="job-badges">
+                        <span class="badge">${job.job_category || 'N/A'}</span>
+                        <span class="badge badge-secondary">${job.job_type || 'N/A'}</span>
+                        ${job.is_remote ? '<span class="badge badge-success">Remote</span>' : ''}
+                        ${job.is_featured ? '<span class="badge badge-warning">Featured</span>' : ''}
+                    </div>
+                </div>
+                
+                ${job.description ? `
+                    <div class="mb-4">
+                        <h5>Description</h5>
+                        <p>${job.description}</p>
+                    </div>
+                ` : ''}
+                
+                ${job.requirements ? `
+                    <div class="mb-4">
+                        <h5>Requirements</h5>
+                        <p>${job.requirements}</p>
+                    </div>
+                ` : ''}
+                
+                ${job.responsibilities ? `
+                    <div class="mb-4">
+                        <h5>Responsibilities</h5>
+                        <p>${job.responsibilities}</p>
+                    </div>
+                ` : ''}
+                
+                <div class="grid grid-cols-2">
+                    <div>
+                        <strong>Location:</strong> ${job.location || 'Not specified'}
+                    </div>
+                    <div>
+                        <strong>Salary:</strong> ${job.salary || 'Not specified'}
+                    </div>
+                    <div>
+                        <strong>Posted:</strong> ${formatDate(job.created_at)}
+                    </div>
+                    <div>
+                        <strong>Views:</strong> ${job.views_count || 0}
+                    </div>
+                </div>
+                
+                ${job.apply_url || job.apply_email ? `
+                    <div class="mt-4">
+                        <h5>Apply</h5>
+                        ${job.apply_url ? `<p><a href="${job.apply_url}" target="_blank" class="btn btn-primary">Apply Online</a></p>` : ''}
+                        ${job.apply_email ? `<p>Email: <a href="mailto:${job.apply_email}">${job.apply_email}</a></p>` : ''}
+                    </div>
+                ` : ''}
+            `;
+
+            modal.classList.add('active');
+        }
+
+        function hideJobModal() {
+            document.getElementById('job-modal').classList.remove('active');
+        }
+
+        // Section Navigation
+        function showSection(sectionName) {
+            // Hide all sections
+            document.querySelectorAll('.section').forEach(section => {
+                section.classList.add('hidden');
+            });
+
+            // Remove active class from all nav buttons
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            // Show selected section
+            document.getElementById(`${sectionName}-section`).classList.remove('hidden');
+            
+            // Add active class to clicked button
+            event.target.classList.add('active');
+
+            currentSection = sectionName;
+
+            // Load section-specific data
+            switch (sectionName) {
+                case 'jobs':
+                    loadJobs();
+                    break;
+                case 'admin':
+                    if (isLoggedIn) loadAdminStats();
+                    break;
+                case 'pending':
+                    if (isLoggedIn) loadPendingJobs();
+                    break;
+                case 'stats':
+                    if (isLoggedIn) loadDetailedStats();
+                    break;
+            }
+        }
+
+        // Jobs Functions
+        async function loadJobs(page = 1) {
+            showLoading('jobs-grid');
+            
+            const params = new URLSearchParams({
+                page: page,
+                per_page: 12
+            });
+
+            try {
+                const data = await apiCall(`/jobs?${params}`);
+                renderJobs(data.jobs);
+                renderPagination(data.pagination, 'jobs-pagination', loadJobs);
+                currentPage = page;
+            } catch (error) {
+                document.getElementById('jobs-grid').innerHTML = `
+                    <div class="text-center">
+                        <p>Error loading jobs: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function filterJobs() {
+            const search = document.getElementById('search-input').value;
+            const category = document.getElementById('category-filter').value;
+            const type = document.getElementById('type-filter').value;
+            const location = document.getElementById('location-filter').value;
+
+            const params = new URLSearchParams({
+                page: 1,
+                per_page: 12
+            });
+
+            if (search) params.append('search', search);
+            if (category) params.append('job_category', category);
+            if (type) params.append('job_type', type);
+            if (location) params.append('location', location);
+
+            showLoading('jobs-grid');
+
+            try {
+                const data = await apiCall(`/jobs?${params}`);
+                renderJobs(data.jobs);
+                renderPagination(data.pagination, 'jobs-pagination', () => filterJobs());
+            } catch (error) {
+                document.getElementById('jobs-grid').innerHTML = `
+                    <div class="text-center">
+                        <p>Error filtering jobs: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        function renderJobs(jobs) {
+            const grid = document.getElementById('jobs-grid');
+            
+            if (jobs.length === 0) {
+                grid.innerHTML = '<div class="text-center"><p>No jobs found.</p></div>';
+                return;
+            }
+
+            grid.innerHTML = jobs.map(job => `
+                <div class="job-card" onclick="loadJobDetail('${job.slug}')">
+                    <div class="job-header">
+                        <div>
+                            <h3 class="job-title">${job.title}</h3>
+                            <p class="job-company">${job.company}</p>
+                        </div>
+                        ${job.company_logo ? `<img src="${job.company_logo}" alt="${job.company}" style="width: 50px; height: 50px; object-fit: cover; border-radius: 8px;">` : ''}
+                    </div>
+                    
+                    <div class="job-badges">
+                        <span class="badge">${job.job_category || 'N/A'}</span>
+                        <span class="badge badge-secondary">${job.job_type || 'N/A'}</span>
+                        ${job.is_remote ? '<span class="badge badge-success">Remote</span>' : ''}
+                        ${job.is_featured ? '<span class="badge badge-warning">Featured</span>' : ''}
+                    </div>
+                    
+                    <div style="color: var(--text-secondary); font-size: 0.875rem;">
+                        <p>📍 ${job.location || 'Location not specified'}</p>
+                        <p>💰 ${job.salary || 'Salary not specified'}</p>
+                        <p>📅 ${formatDate(job.created_at)}</p>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function loadJobDetail(slug) {
+            try {
+                const data = await apiCall(`/jobs/${slug}`);
+                showJobModal(data.job);
+            } catch (error) {
+                showAlert(`Error loading job details: ${error.message}`, 'danger');
+            }
+        }
+
+        // Admin Functions
+        async function loadAdminStats() {
+            try {
+                const data = await apiCall('/admin/stats');
+                const stats = data.stats;
+                
+                document.getElementById('total-jobs').textContent = stats.jobs.total;
+                document.getElementById('approved-jobs').textContent = stats.jobs.approved;
+                document.getElementById('pending-jobs').textContent = stats.jobs.pending;
+                document.getElementById('total-views').textContent = stats.analytics.total_views;
+            } catch (error) {
+                showAlert(`Error loading stats: ${error.message}`, 'danger');
+            }
+        }
+
+        async function loadPendingJobs(page = 1) {
+            showLoading('pending-jobs-table');
+            
+            try {
+                const data = await apiCall(`/admin/jobs/pending?page=${page}&per_page=20`);
+                renderPendingJobs(data.jobs);
+                renderPagination(data.pagination, 'pending-pagination', loadPendingJobs);
+            } catch (error) {
+                document.getElementById('pending-jobs-table').innerHTML = `
+                    <tr><td colspan="7" class="text-center">Error loading pending jobs: ${error.message}</td></tr>
+                `;
+            }
+        }
+
+        function renderPendingJobs(jobs) {
+            const table = document.getElementById('pending-jobs-table');
+            
+            if (jobs.length === 0) {
+                table.innerHTML = '<tr><td colspan="7" class="text-center">No pending jobs found.</td></tr>';
+                return;
+            }
+
+            table.innerHTML = jobs.map(job => `
+                <tr>
+                    <td>
+                        <input type="checkbox" class="checkbox job-select" value="${job.id}" onchange="updateSelectedJobs()">
+                    </td>
+                    <td>${job.title}</td>
+                    <td>${job.company}</td>
+                    <td>${job.job_category || 'N/A'}</td>
+                    <td>${job.source}</td>
+                    <td>${formatDate(job.created_at)}</td>
+                    <td>
+                        <div class="flex gap-2">
+                            <button class="btn btn-success btn-sm" onclick="approveJob('${job.slug}')">Approve</button>
+                            <button class="btn btn-danger btn-sm" onclick="rejectJob('${job.slug}')">Reject</button>
+                            <button class="btn btn-secondary btn-sm" onclick="loadJobDetail('${job.slug}')">View</button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function toggleSelectAll() {
+            const selectAll = document.getElementById('select-all');
+            const checkboxes = document.querySelectorAll('.job-select');
+            
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = selectAll.checked;
+            });
+            
+            updateSelectedJobs();
+        }
+
+        function updateSelectedJobs() {
+            selectedJobs.clear();
+            document.querySelectorAll('.job-select:checked').forEach(checkbox => {
+                selectedJobs.add(checkbox.value);
+            });
+        }
+
+        async function approveJob(slug) {
+            try {
+                await apiCall(`/jobs/${slug}/approve`, { method: 'POST' });
+                showAlert('Job approved successfully!');
+                loadPendingJobs();
+                if (currentSection === 'admin') loadAdminStats();
+            } catch (error) {
+                showAlert(`Error approving job: ${error.message}`, 'danger');
+            }
+        }
+
+        async function rejectJob(slug) {
+            try {
+                await apiCall(`/jobs/${slug}/reject`, { method: 'POST' });
+                showAlert('Job rejected successfully!');
+                loadPendingJobs();
+                if (currentSection === 'admin') loadAdminStats();
+            } catch (error) {
+                showAlert(`Error rejecting job: ${error.message}`, 'danger');
+            }
+        }
+
+        async function bulkApprove() {
+            if (selectedJobs.size === 0) {
+                showAlert('Please select jobs to approve', 'warning');
+                return;
+            }
+
+            try {
+                const data = await apiCall('/admin/jobs/bulk-approve', {
+                    method: 'POST',
+                    body: JSON.stringify({ job_ids: Array.from(selectedJobs) })
+                });
+                
+                showAlert(`${data.approved_count} jobs approved successfully!`);
+                selectedJobs.clear();
+                document.getElementById('select-all').checked = false;
+                loadPendingJobs();
+                if (currentSection === 'admin') loadAdminStats();
+            } catch (error) {
+                showAlert(`Error bulk approving jobs: ${error.message}`, 'danger');
+            }
+        }
+
+        async function bulkReject() {
+            if (selectedJobs.size === 0) {
+                showAlert('Please select jobs to reject', 'warning');
+                return;
+            }
+
+            try {
+                const data = await apiCall('/admin/jobs/bulk-reject', {
+                    method: 'POST',
+                    body: JSON.stringify({ job_ids: Array.from(selectedJobs) })
+                });
+                
+                showAlert(`${data.rejected_count} jobs rejected successfully!`);
+                selectedJobs.clear();
+                document.getElementById('select-all').checked = false;
+                loadPendingJobs();
+                if (currentSection === 'admin') loadAdminStats();
+            } catch (error) {
+                showAlert(`Error bulk rejecting jobs: ${error.message}`, 'danger');
+            }
+        }
+
+        // Create Job Functions
+        async function handleCreateJob(e) {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const jobData = Object.fromEntries(formData);
+            
+            // Convert checkboxes
+            jobData.is_remote = formData.has('is_remote');
+            jobData.is_featured = formData.has('is_featured');
+
+            try {
+                const data = await apiCall('/jobs', {
+                    method: 'POST',
+                    body: JSON.stringify(jobData)
+                });
+
+                showAlert('Job created successfully!');
+                resetForm();
+                if (currentSection === 'admin') loadAdminStats();
+            } catch (error) {
+                showAlert(`Error creating job: ${error.message}`, 'danger');
+            }
+        }
+
+        function resetForm() {
+            document.getElementById('job-form').reset();
+        }
+
+        // Utility Functions for Admin
+        async function syncJobs() {
+            try {
+                const data = await apiCall('/admin/sync-jobs', { method: 'POST' });
+                showAlert(data.message);
+                if (currentSection === 'admin') loadAdminStats();
+                if (currentSection === 'pending') loadPendingJobs();
+            } catch (error) {
+                showAlert(`Error syncing jobs: ${error.message}`, 'danger');
+            }
+        }
+
+        async function cleanupJobs() {
+            try {
+                const data = await apiCall('/admin/cleanup', { method: 'POST' });
+                showAlert(data.message);
+                if (currentSection === 'admin') loadAdminStats();
+            } catch (error) {
+                showAlert(`Error cleaning up jobs: ${error.message}`, 'danger');
+            }
+        }
+
+        async function exportData(type) {
+            try {
+                const data = await apiCall(`/admin/export?type=${type}`);
+                
+                // Create and download file
+                const blob = new Blob([JSON.stringify(data.data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${type}-export-${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                showAlert(`${type} data exported successfully!`);
+            } catch (error) {
+                showAlert(`Error exporting ${type}: ${error.message}`, 'danger');
+            }
+        }
+
+        async function loadDetailedStats() {
+            showLoading('detailed-stats');
+            
+            try {
+                const data = await apiCall('/admin/stats');
+                const stats = data.stats;
+                
+                document.getElementById('detailed-stats').innerHTML = `
+                    <div class="grid grid-cols-2">
+                        <div class="card">
+                            <div class="card-header">
+                                <h4 class="card-title">Jobs by Category</h4>
+                            </div>
+                            <div class="card-body">
+                                ${Object.entries(stats.jobs.by_category).map(([category, count]) => `
+                                    <div class="flex justify-between mb-2">
+                                        <span>${category}</span>
+                                        <span class="font-bold">${count}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <div class="card">
+                            <div class="card-header">
+                                <h4 class="card-title">Jobs by Source</h4>
+                            </div>
+                            <div class="card-body">
+                                ${Object.entries(stats.jobs.by_source).map(([source, count]) => `
+                                    <div class="flex justify-between mb-2">
+                                        <span>${source}</span>
+                                        <span class="font-bold">${count}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 mt-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h4 class="card-title">Recent Jobs</h4>
+                            </div>
+                            <div class="card-body">
+                                ${stats.recent_jobs.slice(0, 5).map(job => `
+                                    <div class="mb-2">
+                                        <strong>${job.title}</strong> at ${job.company}
+                                        <div class="text-sm text-secondary">${formatDate(job.created_at)}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <div class="card">
+                            <div class="card-header">
+                                <h4 class="card-title">Top Viewed Jobs</h4>
+                            </div>
+                            <div class="card-body">
+                                ${stats.top_viewed_jobs.slice(0, 5).map(job => `
+                                    <div class="mb-2">
+                                        <strong>${job.title}</strong> at ${job.company}
+                                        <div class="text-sm text-secondary">${job.views_count || 0} views</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('detailed-stats').innerHTML = `
+                    <div class="text-center">
+                        <p>Error loading detailed stats: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Health Check
+        async function checkHealth() {
+            showLoading('health-result');
+            
+            try {
+                const data = await apiCall('/health');
+                document.getElementById('health-result').innerHTML = `
+                    <div class="card">
+                        <div class="card-header">
+                            <h4 class="card-title">Health Status: <span class="badge badge-success">${data.status}</span></h4>
+                        </div>
+                        <div class="card-body">
+                            <div class="grid grid-cols-2">
+                                ${Object.entries(data.components).map(([component, status]) => `
+                                    <div class="flex justify-between">
+                                        <span>${component}:</span>
+                                        <span class="badge ${status === 'healthy' ? 'badge-success' : status === 'unhealthy' ? 'badge-danger' : 'badge-warning'}">
+                                            ${status}
+                                        </span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            <div class="mt-4">
+                                <p><strong>Version:</strong> ${data.version}</p>
+                                <p><strong>Timestamp:</strong> ${formatDate(data.timestamp)}</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('health-result').innerHTML = `
+                    <div class="alert alert-danger">
+                        <p>Health check failed: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Pagination Helper
+        function renderPagination(pagination, containerId, loadFunction) {
+            const container = document.getElementById(containerId);
+            const { page, pages, total } = pagination;
+            
+            if (pages <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+
+            let paginationHTML = '';
+            
+            // Previous button
+            paginationHTML += `
+                <button class="pagination-btn" ${page === 1 ? 'disabled' : ''} onclick="${loadFunction.name}(${page - 1})">
+                    Previous
+                </button>
+            `;
+            
+            // Page numbers
+            const startPage = Math.max(1, page - 2);
+            const endPage = Math.min(pages, page + 2);
+            
+            if (startPage > 1) {
+                paginationHTML += `<button class="pagination-btn" onclick="${loadFunction.name}(1)">1</button>`;
+                if (startPage > 2) {
+                    paginationHTML += '<span>...</span>';
+                }
+            }
+            
+            for (let i = startPage; i <= endPage; i++) {
+                paginationHTML += `
+                    <button class="pagination-btn ${i === page ? 'active' : ''}" onclick="${loadFunction.name}(${i})">
+                        ${i}
+                    </button>
+                `;
+            }
+            
+            if (endPage < pages) {
+                if (endPage < pages - 1) {
+                    paginationHTML += '<span>...</span>';
+                }
+                paginationHTML += `<button class="pagination-btn" onclick="${loadFunction.name}(${pages})">${pages}</button>`;
+            }
+            
+            // Next button
+            paginationHTML += `
+                <button class="pagination-btn" ${page === pages ? 'disabled' : ''} onclick="${loadFunction.name}(${page + 1})">
+                    Next
+                </button>
+            `;
+            
+            container.innerHTML = paginationHTML;
+        }
     </script>
-    <script src="js/main.js"></script>
 </body>
 </html>
