@@ -15,7 +15,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from sqlalchemy import or_, and_, func
+from sqlalchemy import or_, and_, func, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.dialects.postgresql import UUID
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -70,7 +70,6 @@ app.config['UPLOAD_EXTENSIONS'] = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 app.config['JSON_SORT_KEYS'] = False
 app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
 
-# Session configuration - Fixed for proper CORS support
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_PERMANENT'] = True
 app.config['SESSION_USE_SIGNER'] = True
@@ -78,9 +77,9 @@ app.config['SESSION_KEY_PREFIX'] = 'sridhar_admin:'
 app.config['SESSION_COOKIE_NAME'] = 'sridhar_session'
 app.config['SESSION_COOKIE_DOMAIN'] = None
 app.config['SESSION_COOKIE_PATH'] = '/'
-app.config['SESSION_COOKIE_HTTPONLY'] = False  # Allow JavaScript access for CORS
-app.config['SESSION_COOKIE_SECURE'] = False  # Set to False for development
-app.config['SESSION_COOKIE_SAMESITE'] = None  # More permissive for CORS
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SECURE'] = bool(os.environ.get('PRODUCTION'))
+app.config['SESSION_COOKIE_SAMESITE'] = 'None' if os.environ.get('PRODUCTION') else 'Lax'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d3cikjqdbo4c73e72slg:mirq8x6uekGSDV0O3eb1eVjUG3GuYkVe@red-d3cikjqdbo4c73e72slg:6379')
@@ -93,12 +92,16 @@ cloudinary.config(
 
 db = SQLAlchemy(app)
 
-# CORS configuration - More permissive for session support
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["https://sridharinternetservice.vercel.app/","http://127.0.0.1:5500", "http://localhost:5500", "https://sridharinternetservice.onrender.com"],
+        "origins": [
+            "https://sridharinternetservice.vercel.app",
+            "http://127.0.0.1:5500",
+            "http://localhost:5500",
+            "https://sridharinternetservice.onrender.com"
+        ],
         "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Cookie"],
         "expose_headers": ["X-Total-Count", "X-Page", "X-Per-Page", "Set-Cookie"],
         "max_age": 3600,
         "supports_credentials": True
@@ -145,7 +148,6 @@ def requests_retry_session(
     session.mount('https://', adapter)
     return session
 
-# Updated Job model to match existing database schema
 class Job(db.Model):
     __tablename__ = 'jobs'
     
@@ -155,8 +157,7 @@ class Job(db.Model):
     company = db.Column(db.String(200), nullable=False, index=True)
     location = db.Column(db.String(200), index=True)
     job_type = db.Column(db.String(50), index=True)
-    sub_category = db.Column(db.String(50), index=True)  # Changed from job_category to sub_category
-    salary = db.Column(db.String(100))
+    sub_category = db.Column(db.String(50), index=True)
     salary_min = db.Column(db.Numeric(12, 2))
     salary_max = db.Column(db.Numeric(12, 2))
     experience_min = db.Column(db.Integer)
@@ -183,6 +184,16 @@ class Job(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
+    @property
+    def salary(self):
+        if self.salary_min and self.salary_max:
+            return f"₹{self.salary_min:,.0f} - ₹{self.salary_max:,.0f}"
+        elif self.salary_min:
+            return f"₹{self.salary_min:,.0f}+"
+        elif self.salary_max:
+            return f"Up to ₹{self.salary_max:,.0f}"
+        return None
+
     def to_dict(self, detail=False):
         data = {
             'id': str(self.id),
@@ -191,7 +202,7 @@ class Job(db.Model):
             'company': self.company,
             'location': self.location,
             'job_type': self.job_type,
-            'job_category': self.sub_category,  # Map sub_category to job_category for API consistency
+            'job_category': self.sub_category,
             'salary': self.salary,
             'is_remote': self.is_remote,
             'is_featured': self.is_featured,
@@ -447,10 +458,8 @@ def admin_login():
             }), 400
         
         if username == ADMIN_USERNAME and check_password_hash(ADMIN_PASSWORD_HASH, password):
-            # Clear any existing session
             session.clear()
             
-            # Set session with unique identifier
             session_id = str(uuid.uuid4())
             session.permanent = True
             session['logged_in'] = True
@@ -540,7 +549,7 @@ def health_check():
     }
     
     try:
-        db.session.execute(db.text('SELECT 1'))
+        db.session.execute(text('SELECT 1'))
         health_status['components']['database'] = 'healthy'
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
@@ -617,7 +626,7 @@ def get_jobs():
             query = query.filter_by(job_type=job_type)
         
         if job_category:
-            query = query.filter_by(sub_category=job_category)  # Use sub_category column
+            query = query.filter_by(sub_category=job_category)
         
         if location:
             query = query.filter(Job.location.ilike(f"%{location}%"))
@@ -714,7 +723,6 @@ def create_job():
         if data.get('benefits'):
             data['benefits'] = sanitize_html(data['benefits'])
         
-        # Map job_category to sub_category for database storage
         sub_category = data.pop('job_category', None)
         if not sub_category:
             sub_category = categorize_company(data['company'])
@@ -728,7 +736,7 @@ def create_job():
         
         job = Job(
             slug=slug,
-            sub_category=sub_category,  # Use sub_category column
+            sub_category=sub_category,
             is_approved=True,
             source='manual',
             **data
@@ -795,7 +803,6 @@ def update_job(slug):
         if 'benefits' in data:
             data['benefits'] = sanitize_html(data['benefits'])
         
-        # Handle job_category mapping
         if 'job_category' in data:
             job.sub_category = data.pop('job_category')
         
@@ -919,7 +926,7 @@ def get_pending_jobs():
             query = query.filter_by(source=source)
         
         if job_category:
-            query = query.filter_by(sub_category=job_category)  # Use sub_category column
+            query = query.filter_by(sub_category=job_category)
         
         query = query.order_by(Job.created_at.desc())
         
@@ -1227,8 +1234,7 @@ def fetch_jobs_from_remotive():
                 company=company[:200],
                 location=location[:200],
                 job_type=job_data.get('job_type', 'full-time').lower(),
-                sub_category=job_category,  # Use sub_category column
-                salary=job_data.get('salary', '')[:100],
+                sub_category=job_category,
                 description=job_data.get('description', 'No description available')[:10000],
                 apply_url=job_data.get('url', ''),
                 company_logo=job_data.get('company_logo', ''),
@@ -1449,6 +1455,47 @@ def export_data():
         logger.error(f"Error exporting data: {e}")
         return jsonify({'error': 'Failed to export data', 'message': str(e)}), 500
 
+@app.route('/api/admin/clear-database', methods=['POST'])
+@limiter.limit("5 per hour")
+@require_admin_login
+def clear_database():
+    try:
+        confirmation = request.json.get('confirmation')
+        if confirmation != 'DELETE_ALL_DATA':
+            return jsonify({
+                'error': 'Bad Request',
+                'message': 'Confirmation required. Send {"confirmation": "DELETE_ALL_DATA"}'
+            }), 400
+        
+        tables_cleared = []
+        
+        try:
+            db.session.execute(text('TRUNCATE TABLE job_analytics RESTART IDENTITY CASCADE'))
+            tables_cleared.append('job_analytics')
+        except Exception as e:
+            logger.warning(f"Failed to clear job_analytics: {e}")
+        
+        try:
+            db.session.execute(text('TRUNCATE TABLE jobs RESTART IDENTITY CASCADE'))
+            tables_cleared.append('jobs')
+        except Exception as e:
+            logger.warning(f"Failed to clear jobs: {e}")
+        
+        db.session.commit()
+        
+        logger.info(f"Database cleared. Tables: {tables_cleared}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Database cleared successfully. Tables cleared: {", ".join(tables_cleared)}',
+            'tables_cleared': tables_cleared
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error clearing database: {e}")
+        return jsonify({'error': 'Failed to clear database', 'message': str(e)}), 500
+
 @app.route('/', methods=['GET'])
 @limiter.exempt
 def index():
@@ -1482,7 +1529,8 @@ def index():
                 'stats': '/api/admin/stats',
                 'sync_jobs': '/api/admin/sync-jobs',
                 'cleanup': '/api/admin/cleanup',
-                'export': '/api/admin/export'
+                'export': '/api/admin/export',
+                'clear_database': '/api/admin/clear-database'
             }
         },
         'job_sources': [
@@ -1503,7 +1551,7 @@ def api_info():
 def init_db():
     with app.app_context():
         try:
-            db.session.execute(db.text('SELECT 1'))
+            db.session.execute(text('SELECT 1'))
             
             inspector = db.inspect(db.engine)
             existing_tables = inspector.get_table_names()
