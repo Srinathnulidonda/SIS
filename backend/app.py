@@ -334,7 +334,7 @@ class AnalyticsEvent(db.Model):
     ip_address = db.Column(db.String(45))
     user_agent = db.Column(db.Text)
     referrer = db.Column(db.Text)
-    metadata = db.Column(JSONB, default={})
+    event_data = db.Column(JSONB, default={})
     created_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False, index=True)
 
     __table_args__ = (
@@ -349,7 +349,7 @@ class AnalyticsEvent(db.Model):
             'event_type': self.event_type,
             'entity_type': self.entity_type,
             'entity_id': str(self.entity_id) if self.entity_id else None,
-            'metadata': self.metadata,
+            'event_data': self.event_data,
             'created_at': self.created_at.isoformat(),
         }
 
@@ -481,7 +481,7 @@ def log_audit(user_id: str, action: str, entity_type: str, entity_id: str = None
     db.session.commit()
 
 
-def log_analytics(event_type: str, entity_type: str = None, entity_id: str = None, metadata: dict = None):
+def log_analytics(event_type: str, entity_type: str = None, entity_id: str = None, event_data: dict = None):
     user = get_current_user()
     event = AnalyticsEvent(
         event_type=event_type,
@@ -492,7 +492,7 @@ def log_analytics(event_type: str, entity_type: str = None, entity_id: str = Non
         ip_address=request.remote_addr,
         user_agent=request.headers.get('User-Agent'),
         referrer=request.headers.get('Referer'),
-        metadata=metadata or {}
+        event_data=event_data or {}
     )
     db.session.add(event)
     db.session.commit()
@@ -727,7 +727,7 @@ def list_jobs():
         Job.published_at.desc()
     ).paginate(page=page, per_page=per_page, error_out=False)
     
-    log_analytics('LIST_JOBS', metadata={'page': page, 'search': search, 'job_type': job_type})
+    log_analytics('LIST_JOBS', event_data={'page': page, 'search': search, 'job_type': job_type})
     
     return jsonify({
         'jobs': [job.to_dict() for job in pagination.items],
@@ -985,7 +985,7 @@ def list_services():
         Service.created_at.desc()
     ).paginate(page=page, per_page=per_page, error_out=False)
     
-    log_analytics('LIST_SERVICES', metadata={'page': page, 'category': category})
+    log_analytics('LIST_SERVICES', event_data={'page': page, 'category': category})
     
     return jsonify({
         'services': [service.to_dict() for service in pagination.items],
