@@ -69,6 +69,8 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_EXTENSIONS'] = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 app.config['JSON_SORT_KEYS'] = False
 app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
+
+# Session configuration - Fixed for proper CORS support
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_PERMANENT'] = True
 app.config['SESSION_USE_SIGNER'] = True
@@ -76,9 +78,9 @@ app.config['SESSION_KEY_PREFIX'] = 'sridhar_admin:'
 app.config['SESSION_COOKIE_NAME'] = 'sridhar_session'
 app.config['SESSION_COOKIE_DOMAIN'] = None
 app.config['SESSION_COOKIE_PATH'] = '/'
-app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = False  # Allow JavaScript access for CORS
 app.config['SESSION_COOKIE_SECURE'] = False  # Set to False for development
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SAMESITE'] = None  # More permissive for CORS
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d3cikjqdbo4c73e72slg:mirq8x6uekGSDV0O3eb1eVjUG3GuYkVe@red-d3cikjqdbo4c73e72slg:6379')
@@ -91,16 +93,17 @@ cloudinary.config(
 
 db = SQLAlchemy(app)
 
+# CORS configuration - More permissive for session support
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["*"],
+        "origins": ["http://127.0.0.1:5500", "http://localhost:5500", "https://sridharinternetservice.onrender.com"],
         "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"],
-        "expose_headers": ["X-Total-Count", "X-Page", "X-Per-Page"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+        "expose_headers": ["X-Total-Count", "X-Page", "X-Per-Page", "Set-Cookie"],
         "max_age": 3600,
         "supports_credentials": True
     }
-})
+}, supports_credentials=True)
 
 try:
     limiter = Limiter(
@@ -142,6 +145,7 @@ def requests_retry_session(
     session.mount('https://', adapter)
     return session
 
+# Updated Job model to match existing database schema
 class Job(db.Model):
     __tablename__ = 'jobs'
     
@@ -151,7 +155,7 @@ class Job(db.Model):
     company = db.Column(db.String(200), nullable=False, index=True)
     location = db.Column(db.String(200), index=True)
     job_type = db.Column(db.String(50), index=True)
-    job_category = db.Column(db.String(50), index=True)
+    sub_category = db.Column(db.String(50), index=True)  # Changed from job_category to sub_category
     salary = db.Column(db.String(100))
     salary_min = db.Column(db.Numeric(12, 2))
     salary_max = db.Column(db.Numeric(12, 2))
@@ -187,7 +191,7 @@ class Job(db.Model):
             'company': self.company,
             'location': self.location,
             'job_type': self.job_type,
-            'job_category': self.job_category,
+            'job_category': self.sub_category,  # Map sub_category to job_category for API consistency
             'salary': self.salary,
             'is_remote': self.is_remote,
             'is_featured': self.is_featured,
@@ -331,8 +335,10 @@ def paginate(query, page: int, per_page: int = 20):
 def require_admin_login(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        logger.debug(f"Session check: logged_in={session.get('logged_in')}, is_admin={session.get('is_admin')}, session_id={session.get('session_id')}")
+        
         if not session.get('is_admin') or not session.get('logged_in'):
-            logger.warning(f"Unauthorized access attempt from {get_remote_address()}")
+            logger.warning(f"Unauthorized access attempt from {get_remote_address()} - Session: {dict(session)}")
             return jsonify({
                 'error': 'Unauthorized',
                 'message': 'Admin login required',
@@ -441,22 +447,31 @@ def admin_login():
             }), 400
         
         if username == ADMIN_USERNAME and check_password_hash(ADMIN_PASSWORD_HASH, password):
+            # Clear any existing session
+            session.clear()
+            
+            # Set session with unique identifier
+            session_id = str(uuid.uuid4())
             session.permanent = True
             session['logged_in'] = True
             session['is_admin'] = True
             session['username'] = username
             session['login_time'] = datetime.utcnow().isoformat()
+            session['session_id'] = session_id
             
-            logger.info(f"Admin login successful from {get_remote_address()}")
+            logger.info(f"Admin login successful from {get_remote_address()}, session_id: {session_id}")
             
-            return jsonify({
+            response = jsonify({
                 'success': True,
                 'message': 'Login successful',
                 'admin': {
                     'username': username,
-                    'login_time': session['login_time']
+                    'login_time': session['login_time'],
+                    'session_id': session_id
                 }
-            }), 200
+            })
+            
+            return response, 200
         else:
             logger.warning(f"Failed admin login attempt from {get_remote_address()} with username: {username}")
             return jsonify({
@@ -502,6 +517,7 @@ def admin_profile():
                 'username': session.get('username'),
                 'login_time': session.get('login_time'),
                 'is_admin': session.get('is_admin'),
+                'session_id': session.get('session_id'),
                 'session_expires': (datetime.utcnow() + app.config['PERMANENT_SESSION_LIFETIME']).isoformat()
             }
         }), 200
@@ -559,9 +575,9 @@ def detailed_health_check():
                 'pending_jobs': Job.query.filter_by(is_approved=False, is_active=True).count(),
             },
             'jobs_by_category': dict(
-                db.session.query(Job.job_category, func.count(Job.id))
-                .filter(Job.is_active == True, Job.job_category.isnot(None))
-                .group_by(Job.job_category)
+                db.session.query(Job.sub_category, func.count(Job.id))
+                .filter(Job.is_active == True, Job.sub_category.isnot(None))
+                .group_by(Job.sub_category)
                 .all()
             ),
             'timestamp': datetime.utcnow().isoformat()
@@ -601,7 +617,7 @@ def get_jobs():
             query = query.filter_by(job_type=job_type)
         
         if job_category:
-            query = query.filter_by(job_category=job_category)
+            query = query.filter_by(sub_category=job_category)  # Use sub_category column
         
         if location:
             query = query.filter(Job.location.ilike(f"%{location}%"))
@@ -698,8 +714,10 @@ def create_job():
         if data.get('benefits'):
             data['benefits'] = sanitize_html(data['benefits'])
         
-        if not data.get('job_category'):
-            data['job_category'] = categorize_company(data['company'])
+        # Map job_category to sub_category for database storage
+        sub_category = data.pop('job_category', None)
+        if not sub_category:
+            sub_category = categorize_company(data['company'])
         
         slug = generate_slug(f"{data['title']}-{data['company']}")
         base_slug = slug
@@ -710,6 +728,7 @@ def create_job():
         
         job = Job(
             slug=slug,
+            sub_category=sub_category,  # Use sub_category column
             is_approved=True,
             source='manual',
             **data
@@ -775,6 +794,10 @@ def update_job(slug):
             data['responsibilities'] = sanitize_html(data['responsibilities'])
         if 'benefits' in data:
             data['benefits'] = sanitize_html(data['benefits'])
+        
+        # Handle job_category mapping
+        if 'job_category' in data:
+            job.sub_category = data.pop('job_category')
         
         for key, value in data.items():
             if key != 'slug':
@@ -896,7 +919,7 @@ def get_pending_jobs():
             query = query.filter_by(source=source)
         
         if job_category:
-            query = query.filter_by(job_category=job_category)
+            query = query.filter_by(sub_category=job_category)  # Use sub_category column
         
         query = query.order_by(Job.created_at.desc())
         
@@ -916,12 +939,12 @@ def get_pending_jobs():
         stats['by_source'] = dict(source_stats)
         
         category_stats = db.session.query(
-            Job.job_category, func.count(Job.id)
+            Job.sub_category, func.count(Job.id)
         ).filter(
             Job.is_approved == False,
             Job.is_active == True,
-            Job.job_category.isnot(None)
-        ).group_by(Job.job_category).all()
+            Job.sub_category.isnot(None)
+        ).group_by(Job.sub_category).all()
         stats['by_category'] = dict(category_stats)
         
         return jsonify({
@@ -1077,9 +1100,9 @@ def get_admin_stats():
                     .group_by(Job.source).all()
                 ),
                 'by_category': dict(
-                    db.session.query(Job.job_category, func.count(Job.id))
-                    .filter(Job.job_category.isnot(None))
-                    .group_by(Job.job_category).all()
+                    db.session.query(Job.sub_category, func.count(Job.id))
+                    .filter(Job.sub_category.isnot(None))
+                    .group_by(Job.sub_category).all()
                 ),
                 'by_type': dict(
                     db.session.query(Job.job_type, func.count(Job.id))
@@ -1204,7 +1227,7 @@ def fetch_jobs_from_remotive():
                 company=company[:200],
                 location=location[:200],
                 job_type=job_data.get('job_type', 'full-time').lower(),
-                job_category=job_category,
+                sub_category=job_category,  # Use sub_category column
                 salary=job_data.get('salary', '')[:100],
                 description=job_data.get('description', 'No description available')[:10000],
                 apply_url=job_data.get('url', ''),
