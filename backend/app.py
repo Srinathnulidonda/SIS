@@ -431,7 +431,7 @@ def require_admin_login(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not session.get('is_admin') or not session.get('logged_in'):
-            logger.warning(f"Unauthorized access attempt from {get_remote_address(request)}")
+            logger.warning(f"Unauthorized access attempt from {get_remote_address()}")
             return jsonify({
                 'error': 'Unauthorized',
                 'message': 'Admin login required',
@@ -454,7 +454,7 @@ def track_analytics(event_type: str):
                         analytics = JobAnalytics(
                             job_id=job.id,
                             event_type=event_type,
-                            user_ip=get_remote_address(request),
+                            user_ip=get_remote_address(),
                             user_agent=request.headers.get('User-Agent', '')[:500]
                         )
                         db.session.add(analytics)
@@ -546,7 +546,7 @@ def admin_login():
             session['login_time'] = datetime.utcnow().isoformat()
             session.permanent = True
             
-            logger.info(f"Admin login successful from {get_remote_address(request)}")
+            logger.info(f"Admin login successful from {get_remote_address()}")
             
             return jsonify({
                 'success': True,
@@ -557,7 +557,7 @@ def admin_login():
                 }
             }), 200
         else:
-            logger.warning(f"Failed admin login attempt from {get_remote_address(request)} with username: {username}")
+            logger.warning(f"Failed admin login attempt from {get_remote_address()} with username: {username}")
             return jsonify({
                 'error': 'Unauthorized',
                 'message': 'Invalid credentials'
