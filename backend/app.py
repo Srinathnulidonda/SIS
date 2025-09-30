@@ -1,4 +1,3 @@
-#backend/app.py
 import os
 import logging
 import secrets
@@ -77,9 +76,9 @@ app.config['SESSION_KEY_PREFIX'] = 'sridhar_admin:'
 app.config['SESSION_COOKIE_NAME'] = 'sridhar_session'
 app.config['SESSION_COOKIE_DOMAIN'] = None
 app.config['SESSION_COOKIE_PATH'] = '/'
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SECURE'] = bool(os.environ.get('PRODUCTION'))
-app.config['SESSION_COOKIE_SAMESITE'] = 'None' if os.environ.get('PRODUCTION') else 'Lax'
+app.config['SESSION_COOKIE_HTTPONLY'] = False
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d3cikjqdbo4c73e72slg:mirq8x6uekGSDV0O3eb1eVjUG3GuYkVe@red-d3cikjqdbo4c73e72slg:6379')
@@ -92,21 +91,17 @@ cloudinary.config(
 
 db = SQLAlchemy(app)
 
-CORS(app, resources={
-    r"/api/*": {
-        "origins": [
-            "https://sridharinternetservice.vercel.app",
-            "http://127.0.0.1:5500",
-            "http://localhost:5500",
-            "https://sridharinternetservice.onrender.com"
-        ],
-        "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Cookie"],
-        "expose_headers": ["X-Total-Count", "X-Page", "X-Per-Page", "Set-Cookie"],
-        "max_age": 3600,
-        "supports_credentials": True
-    }
-}, supports_credentials=True)
+CORS(app, 
+     origins=[
+         "https://sridharinternetservice.vercel.app",
+         "http://127.0.0.1:5500",
+         "http://localhost:5500",
+         "https://sridharinternetservice.onrender.com"
+     ],
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+     expose_headers=["Set-Cookie"],
+     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 
 try:
     limiter = Limiter(
@@ -158,20 +153,20 @@ class Job(db.Model):
     location = db.Column(db.String(200), index=True)
     job_type = db.Column(db.String(50), index=True)
     sub_category = db.Column(db.String(50), index=True)
-    salary_min = db.Column(db.Numeric(12, 2))
-    salary_max = db.Column(db.Numeric(12, 2))
-    experience_min = db.Column(db.Integer)
-    experience_max = db.Column(db.Integer)
-    education = db.Column(db.String(200))
-    skills = db.Column(db.JSON)
+    salary_min = db.Column(db.Numeric(12, 2), nullable=True)
+    salary_max = db.Column(db.Numeric(12, 2), nullable=True)
+    experience_min = db.Column(db.Integer, nullable=True)
+    experience_max = db.Column(db.Integer, nullable=True)
+    education = db.Column(db.String(200), nullable=True)
+    skills = db.Column(db.JSON, nullable=True)
     description = db.Column(db.Text, nullable=False)
-    requirements = db.Column(db.Text)
-    responsibilities = db.Column(db.Text)
-    benefits = db.Column(db.Text)
-    apply_url = db.Column(db.String(500))
-    apply_email = db.Column(db.String(200))
-    company_logo = db.Column(db.String(500))
-    company_website = db.Column(db.String(300))
+    requirements = db.Column(db.Text, nullable=True)
+    responsibilities = db.Column(db.Text, nullable=True)
+    benefits = db.Column(db.Text, nullable=True)
+    apply_url = db.Column(db.String(500), nullable=True)
+    apply_email = db.Column(db.String(200), nullable=True)
+    company_logo = db.Column(db.String(500), nullable=True)
+    company_website = db.Column(db.String(300), nullable=True)
     external_id = db.Column(db.String(200), unique=True, index=True)
     source = db.Column(db.String(50), default='manual', index=True)
     is_approved = db.Column(db.Boolean, default=False, index=True)
@@ -179,8 +174,8 @@ class Job(db.Model):
     is_remote = db.Column(db.Boolean, default=False, index=True)
     is_featured = db.Column(db.Boolean, default=False, index=True)
     views_count = db.Column(db.Integer, default=0)
-    application_deadline = db.Column(db.DateTime)
-    expires_at = db.Column(db.DateTime, index=True)
+    application_deadline = db.Column(db.DateTime, nullable=True)
+    expires_at = db.Column(db.DateTime, index=True, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -384,6 +379,18 @@ def track_analytics(event_type: str):
             return result
         return decorated_function
     return decorator
+
+@app.after_request
+def after_request(response):
+    if request.path.startswith('/api/'):
+        origin = request.headers.get('Origin')
+        if origin in ["https://sridharinternetservice.vercel.app", "http://127.0.0.1:5500", "http://localhost:5500"]:
+            response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+            response.headers['Access-Control-Expose-Headers'] = 'Set-Cookie'
+    return response
 
 @app.errorhandler(400)
 def bad_request(e):
@@ -1548,6 +1555,68 @@ def index():
 def api_info():
     return index()
 
+def add_missing_columns():
+    with app.app_context():
+        try:
+            inspector = db.inspect(db.engine)
+            columns = [col['name'] for col in inspector.get_columns('jobs')]
+            
+            missing_columns = []
+            
+            if 'experience_min' not in columns:
+                db.session.execute(text('ALTER TABLE jobs ADD COLUMN experience_min INTEGER'))
+                missing_columns.append('experience_min')
+                
+            if 'experience_max' not in columns:
+                db.session.execute(text('ALTER TABLE jobs ADD COLUMN experience_max INTEGER'))
+                missing_columns.append('experience_max')
+                
+            if 'education' not in columns:
+                db.session.execute(text('ALTER TABLE jobs ADD COLUMN education VARCHAR(200)'))
+                missing_columns.append('education')
+                
+            if 'skills' not in columns:
+                db.session.execute(text('ALTER TABLE jobs ADD COLUMN skills JSON'))
+                missing_columns.append('skills')
+                
+            if 'requirements' not in columns:
+                db.session.execute(text('ALTER TABLE jobs ADD COLUMN requirements TEXT'))
+                missing_columns.append('requirements')
+                
+            if 'responsibilities' not in columns:
+                db.session.execute(text('ALTER TABLE jobs ADD COLUMN responsibilities TEXT'))
+                missing_columns.append('responsibilities')
+                
+            if 'benefits' not in columns:
+                db.session.execute(text('ALTER TABLE jobs ADD COLUMN benefits TEXT'))
+                missing_columns.append('benefits')
+                
+            if 'apply_url' not in columns:
+                db.session.execute(text('ALTER TABLE jobs ADD COLUMN apply_url VARCHAR(500)'))
+                missing_columns.append('apply_url')
+                
+            if 'apply_email' not in columns:
+                db.session.execute(text('ALTER TABLE jobs ADD COLUMN apply_email VARCHAR(200)'))
+                missing_columns.append('apply_email')
+                
+            if 'company_website' not in columns:
+                db.session.execute(text('ALTER TABLE jobs ADD COLUMN company_website VARCHAR(300)'))
+                missing_columns.append('company_website')
+                
+            if 'application_deadline' not in columns:
+                db.session.execute(text('ALTER TABLE jobs ADD COLUMN application_deadline TIMESTAMP'))
+                missing_columns.append('application_deadline')
+                
+            if missing_columns:
+                db.session.commit()
+                logger.info(f"Added missing columns: {missing_columns}")
+            else:
+                logger.info("All required columns exist")
+                
+        except Exception as e:
+            logger.error(f"Error adding columns: {e}")
+            db.session.rollback()
+
 def init_db():
     with app.app_context():
         try:
@@ -1570,6 +1639,7 @@ def init_db():
                 logger.info("Database tables created successfully")
             else:
                 logger.info("All required tables already exist")
+                add_missing_columns()
             
             logger.info("Database initialization completed successfully")
             
