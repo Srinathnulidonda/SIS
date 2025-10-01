@@ -179,7 +179,7 @@ class Job(db.Model):
     company_logo = db.Column(db.String(500), nullable=True)
     company_website = db.Column(db.String(300), nullable=True)
     external_id = db.Column(db.String(200), unique=True, index=True)
-    source = db.Column(db.String(50), default='manual', index=True)
+    source = db.Column(db.String(50), index=True)
     is_approved = db.Column(db.Boolean, default=False, index=True)
     is_active = db.Column(db.Boolean, default=True, index=True)
     is_remote = db.Column(db.Boolean, default=False, index=True)
@@ -771,7 +771,7 @@ def create_job():
             slug=slug,
             sub_category=sub_category,
             is_approved=True,
-            source='manual',
+            source='admin',
             **data
         )
         
@@ -787,6 +787,7 @@ def create_job():
         }), 201
         
     except ValidationError as e:
+        logger.error(f"Validation error creating job: {e.messages}")
         return jsonify({'error': 'Validation Error', 'messages': e.messages}), 422
     except IntegrityError as e:
         db.session.rollback()
@@ -1137,6 +1138,7 @@ def get_admin_stats():
                 'recent': Job.query.filter(Job.created_at >= since_date).count(),
                 'by_source': dict(
                     db.session.query(Job.source, func.count(Job.id))
+                    .filter(Job.source.isnot(None))
                     .group_by(Job.source).all()
                 ),
                 'by_category': dict(
@@ -1266,13 +1268,13 @@ def fetch_jobs_from_remotive():
                 slug=slug,
                 company=company[:200],
                 location=location[:200],
-                job_type=job_data.get('job_type', 'full-time').lower(),
+                job_type=job_data.get('job_type', 'full-time').lower().replace('_', '-'),
                 sub_category=job_category,
                 description=job_data.get('description', 'No description available')[:10000],
                 apply_url=job_data.get('url', ''),
                 company_logo=job_data.get('company_logo', ''),
                 external_id=external_id,
-                source='remotive',
+                source='api',
                 is_approved=False,
                 is_active=True,
                 is_remote=True,
@@ -1338,7 +1340,7 @@ def cleanup_old_unapproved_jobs():
             old_jobs = Job.query.filter(
                 Job.is_approved == False,
                 Job.created_at < cutoff_date,
-                Job.source != 'manual'
+                Job.source.in_(['api', 'remotive'])
             ).all()
             
             for job in old_jobs:
@@ -1567,7 +1569,7 @@ def index():
             }
         },
         'job_sources': [
-            'manual', 'remotive'
+            'admin', 'api'
         ],
         'job_categories': [
             'government', 'private', 'mnc', 'startup', 'public-sector'
@@ -1580,6 +1582,23 @@ def index():
 @limiter.exempt
 def api_info():
     return index()
+
+def fix_source_column():
+    with app.app_context():
+        try:
+            logger.info("Checking and fixing source column...")
+            
+            db.session.execute(text("""
+                ALTER TABLE jobs 
+                ALTER COLUMN source TYPE VARCHAR(50)
+            """))
+            
+            db.session.commit()
+            logger.info("Source column type updated to VARCHAR(50)")
+            
+        except Exception as e:
+            logger.warning(f"Could not alter source column (might already be correct): {e}")
+            db.session.rollback()
 
 def add_missing_columns():
     with app.app_context():
@@ -1602,7 +1621,7 @@ def add_missing_columns():
                 'company_logo': 'ALTER TABLE jobs ADD COLUMN company_logo VARCHAR(500)',
                 'company_website': 'ALTER TABLE jobs ADD COLUMN company_website VARCHAR(300)',
                 'external_id': 'ALTER TABLE jobs ADD COLUMN external_id VARCHAR(200)',
-                'source': "ALTER TABLE jobs ADD COLUMN source VARCHAR(50) DEFAULT 'manual'",
+                'source': "ALTER TABLE jobs ADD COLUMN source VARCHAR(50)",
                 'is_approved': 'ALTER TABLE jobs ADD COLUMN is_approved BOOLEAN DEFAULT FALSE',
                 'is_active': 'ALTER TABLE jobs ADD COLUMN is_active BOOLEAN DEFAULT TRUE',
                 'is_remote': 'ALTER TABLE jobs ADD COLUMN is_remote BOOLEAN DEFAULT FALSE',
@@ -1628,6 +1647,8 @@ def add_missing_columns():
                 logger.info(f"Successfully added missing columns: {missing_columns}")
             else:
                 logger.info("All required columns exist")
+                
+            fix_source_column()
                 
             index_statements = [
                 'CREATE INDEX IF NOT EXISTS idx_jobs_slug ON jobs(slug)',
