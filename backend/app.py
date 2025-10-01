@@ -9,11 +9,11 @@ from functools import wraps
 from typing import Optional, Dict, List
 from urllib.parse import urlencode, quote
 import hashlib
+import jwt
 
-from flask import Flask, request, jsonify, g, session
+from flask import Flask, request, jsonify, g
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
-from flask_session import Session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy import or_, and_, func, text, inspect
@@ -65,23 +65,14 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     }
 }
 
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', secrets.token_hex(32))
+JWT_ALGORITHM = 'HS256'
+JWT_EXPIRATION_HOURS = 24
+
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_EXTENSIONS'] = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 app.config['JSON_SORT_KEYS'] = False
 app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
-
-app.config['SESSION_TYPE'] = 'filesystem'
-app.config['SESSION_PERMANENT'] = True
-app.config['SESSION_USE_SIGNER'] = True
-app.config['SESSION_KEY_PREFIX'] = 'sridhar_admin:'
-app.config['SESSION_COOKIE_NAME'] = 'sridhar_session'
-app.config['SESSION_COOKIE_DOMAIN'] = None
-app.config['SESSION_COOKIE_PATH'] = '/'
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get('PRODUCTION', False)
-app.config['SESSION_COOKIE_SAMESITE'] = 'None' if os.environ.get('PRODUCTION', False) else 'Lax'
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d3cikjqdbo4c73e72slg:mirq8x6uekGSDV0O3eb1eVjUG3GuYkVe@red-d3cikjqdbo4c73e72slg:6379')
 
@@ -92,7 +83,6 @@ cloudinary.config(
 )
 
 db = SQLAlchemy(app)
-Session(app)
 
 CORS(app, 
      origins=[
@@ -103,7 +93,7 @@ CORS(app,
      ],
      supports_credentials=True,
      allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-     expose_headers=["Set-Cookie"],
+     expose_headers=["Authorization"],
      methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 
 try:
@@ -126,6 +116,24 @@ except Exception as e:
 
 ADMIN_USERNAME = 'admin'
 ADMIN_PASSWORD_HASH = generate_password_hash('admin123')
+
+def generate_token(username):
+    payload = {
+        'username': username,
+        'is_admin': True,
+        'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
+        'iat': datetime.utcnow()
+    }
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+def verify_token(token):
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
 
 def requests_retry_session(
     retries=3,
@@ -347,17 +355,40 @@ def paginate(query, page: int, per_page: int = 20):
 def require_admin_login(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        logger.debug(f"Session check: logged_in={session.get('logged_in')}, is_admin={session.get('is_admin')}, session_id={session.get('session_id')}")
+        auth_header = request.headers.get('Authorization')
         
-        if not session.get('is_admin') or not session.get('logged_in'):
-            logger.warning(f"Unauthorized access attempt from {get_remote_address()} - Session: {dict(session)}")
+        if not auth_header:
+            logger.warning(f"Missing Authorization header from {get_remote_address()}")
             return jsonify({
                 'error': 'Unauthorized',
-                'message': 'Admin login required',
+                'message': 'Authorization header required',
                 'status': 401
             }), 401
-        g.is_admin = True
-        return f(*args, **kwargs)
+        
+        try:
+            token = auth_header.replace('Bearer ', '')
+            payload = verify_token(token)
+            
+            if not payload or not payload.get('is_admin'):
+                logger.warning(f"Invalid token from {get_remote_address()}")
+                return jsonify({
+                    'error': 'Unauthorized',
+                    'message': 'Invalid or expired token',
+                    'status': 401
+                }), 401
+            
+            g.current_user = payload
+            g.is_admin = True
+            return f(*args, **kwargs)
+            
+        except Exception as e:
+            logger.error(f"Auth error: {e}")
+            return jsonify({
+                'error': 'Unauthorized',
+                'message': 'Authentication failed',
+                'status': 401
+            }), 401
+            
     return decorated_function
 
 def track_analytics(event_type: str):
@@ -395,7 +426,7 @@ def after_request(response):
             response.headers['Access-Control-Allow-Credentials'] = 'true'
             response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
             response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
-            response.headers['Access-Control-Expose-Headers'] = 'Set-Cookie'
+            response.headers['Access-Control-Expose-Headers'] = 'Authorization'
     return response
 
 @app.errorhandler(400)
@@ -471,29 +502,19 @@ def admin_login():
             }), 400
         
         if username == ADMIN_USERNAME and check_password_hash(ADMIN_PASSWORD_HASH, password):
-            session.clear()
+            token = generate_token(username)
             
-            session_id = str(uuid.uuid4())
-            session.permanent = True
-            session['logged_in'] = True
-            session['is_admin'] = True
-            session['username'] = username
-            session['login_time'] = datetime.utcnow().isoformat()
-            session['session_id'] = session_id
+            logger.info(f"Admin login successful from {get_remote_address()}")
             
-            logger.info(f"Admin login successful from {get_remote_address()}, session_id: {session_id}")
-            
-            response = jsonify({
+            return jsonify({
                 'success': True,
                 'message': 'Login successful',
+                'token': token,
                 'admin': {
                     'username': username,
-                    'login_time': session['login_time'],
-                    'session_id': session_id
+                    'login_time': datetime.utcnow().isoformat()
                 }
-            })
-            
-            return response, 200
+            }), 200
         else:
             logger.warning(f"Failed admin login attempt from {get_remote_address()} with username: {username}")
             return jsonify({
@@ -512,9 +533,7 @@ def admin_login():
 @require_admin_login
 def admin_logout():
     try:
-        username = session.get('username')
-        session.clear()
-        
+        username = g.current_user.get('username')
         logger.info(f"Admin logout: {username}")
         
         return jsonify({
@@ -536,11 +555,9 @@ def admin_profile():
         return jsonify({
             'success': True,
             'admin': {
-                'username': session.get('username'),
-                'login_time': session.get('login_time'),
-                'is_admin': session.get('is_admin'),
-                'session_id': session.get('session_id'),
-                'session_expires': (datetime.utcnow() + app.config['PERMANENT_SESSION_LIFETIME']).isoformat()
+                'username': g.current_user.get('username'),
+                'is_admin': g.current_user.get('is_admin'),
+                'token_expires': datetime.fromtimestamp(g.current_user.get('exp')).isoformat()
             }
         }), 200
         
@@ -629,7 +646,7 @@ def get_jobs():
         company = request.args.get('company', type=str)
         source = request.args.get('source', type=str)
         
-        is_admin = session.get('is_admin') and session.get('logged_in')
+        is_admin = hasattr(g, 'is_admin') and g.is_admin
         
         query = Job.query
         
@@ -695,7 +712,7 @@ def get_jobs():
 @track_analytics('view')
 def get_job(slug):
     try:
-        is_admin = session.get('is_admin') and session.get('logged_in')
+        is_admin = hasattr(g, 'is_admin') and g.is_admin
         
         query = Job.query.filter_by(slug=slug)
         if not is_admin:
@@ -1520,7 +1537,7 @@ def index():
         'version': '2.0.0',
         'description': 'Professional job portal API focused on Indian market',
         'regions': ['Telangana', 'Andhra Pradesh'],
-        'authentication': 'Session-based admin login',
+        'authentication': 'JWT token-based authentication',
         'admin_credentials': 'Please use /api/admin/login endpoint',
         'endpoints': {
             'health': {
