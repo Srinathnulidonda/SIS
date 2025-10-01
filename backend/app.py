@@ -180,6 +180,7 @@ class Job(db.Model):
     company_website = db.Column(db.String(300), nullable=True)
     external_id = db.Column(db.String(200), unique=True, index=True)
     source = db.Column(db.String(50), index=True)
+    status = db.Column(db.String(50), default='active')
     is_approved = db.Column(db.Boolean, default=False, index=True)
     is_active = db.Column(db.Boolean, default=True, index=True)
     is_remote = db.Column(db.Boolean, default=False, index=True)
@@ -234,6 +235,7 @@ class Job(db.Model):
                 'apply_email': self.apply_email,
                 'company_website': self.company_website,
                 'source': self.source,
+                'status': self.status,
                 'is_approved': self.is_approved,
                 'external_id': self.external_id,
                 'views_count': self.views_count,
@@ -772,6 +774,7 @@ def create_job():
             sub_category=sub_category,
             is_approved=True,
             source='admin',
+            status='active',
             **data
         )
         
@@ -1275,6 +1278,7 @@ def fetch_jobs_from_remotive():
                 company_logo=job_data.get('company_logo', ''),
                 external_id=external_id,
                 source='api',
+                status='active',
                 is_approved=False,
                 is_active=True,
                 is_remote=True,
@@ -1622,6 +1626,7 @@ def add_missing_columns():
                 'company_website': 'ALTER TABLE jobs ADD COLUMN company_website VARCHAR(300)',
                 'external_id': 'ALTER TABLE jobs ADD COLUMN external_id VARCHAR(200)',
                 'source': "ALTER TABLE jobs ADD COLUMN source VARCHAR(50)",
+                'status': "ALTER TABLE jobs ADD COLUMN status VARCHAR(50)",
                 'is_approved': 'ALTER TABLE jobs ADD COLUMN is_approved BOOLEAN DEFAULT FALSE',
                 'is_active': 'ALTER TABLE jobs ADD COLUMN is_active BOOLEAN DEFAULT TRUE',
                 'is_remote': 'ALTER TABLE jobs ADD COLUMN is_remote BOOLEAN DEFAULT FALSE',
