@@ -14,3 +14,4 @@ python-dotenv
 gunicorn
 Werkzeug
 feedparser
+flask_session
