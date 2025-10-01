@@ -1,3 +1,4 @@
+#backend/app.py
 import os
 import logging
 import secrets
@@ -12,9 +13,10 @@ import hashlib
 from flask import Flask, request, jsonify, g, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+from flask_session import Session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from sqlalchemy import or_, and_, func, text
+from sqlalchemy import or_, and_, func, text, inspect
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.dialects.postgresql import UUID
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -25,7 +27,7 @@ import cloudinary
 import cloudinary.uploader
 import requests
 from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+from urllib3.util.retry import Retry
 from marshmallow import Schema, fields, validate, ValidationError, EXCLUDE
 import feedparser
 
@@ -76,9 +78,9 @@ app.config['SESSION_KEY_PREFIX'] = 'sridhar_admin:'
 app.config['SESSION_COOKIE_NAME'] = 'sridhar_session'
 app.config['SESSION_COOKIE_DOMAIN'] = None
 app.config['SESSION_COOKIE_PATH'] = '/'
-app.config['SESSION_COOKIE_HTTPONLY'] = False
-app.config['SESSION_COOKIE_SECURE'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('PRODUCTION', False)
+app.config['SESSION_COOKIE_SAMESITE'] = 'None' if os.environ.get('PRODUCTION', False) else 'Lax'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d3cikjqdbo4c73e72slg:mirq8x6uekGSDV0O3eb1eVjUG3GuYkVe@red-d3cikjqdbo4c73e72slg:6379')
@@ -90,6 +92,7 @@ cloudinary.config(
 )
 
 db = SQLAlchemy(app)
+Session(app)
 
 CORS(app, 
      origins=[
@@ -232,7 +235,10 @@ class Job(db.Model):
 
     def increment_views(self):
         self.views_count = (self.views_count or 0) + 1
-        db.session.commit()
+        try:
+            db.session.commit()
+        except:
+            db.session.rollback()
 
 class JobAnalytics(db.Model):
     __tablename__ = 'job_analytics'
@@ -384,7 +390,7 @@ def track_analytics(event_type: str):
 def after_request(response):
     if request.path.startswith('/api/'):
         origin = request.headers.get('Origin')
-        if origin in ["https://sridharinternetservice.vercel.app", "http://127.0.0.1:5500", "http://localhost:5500"]:
+        if origin in ["https://sridharinternetservice.vercel.app", "http://127.0.0.1:5500", "http://localhost:5500", "https://sridharinternetservice.onrender.com"]:
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Credentials'] = 'true'
             response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
@@ -564,8 +570,11 @@ def health_check():
         health_status['status'] = 'degraded'
     
     try:
-        limiter.storage.ping()
-        health_status['components']['redis'] = 'healthy'
+        if hasattr(limiter, 'storage'):
+            limiter.storage.ping()
+            health_status['components']['redis'] = 'healthy'
+        else:
+            health_status['components']['redis'] = 'unavailable'
     except:
         health_status['components']['redis'] = 'unavailable'
     
@@ -1477,13 +1486,13 @@ def clear_database():
         tables_cleared = []
         
         try:
-            db.session.execute(text('TRUNCATE TABLE job_analytics RESTART IDENTITY CASCADE'))
+            JobAnalytics.query.delete()
             tables_cleared.append('job_analytics')
         except Exception as e:
             logger.warning(f"Failed to clear job_analytics: {e}")
         
         try:
-            db.session.execute(text('TRUNCATE TABLE jobs RESTART IDENTITY CASCADE'))
+            Job.query.delete()
             tables_cleared.append('jobs')
         except Exception as e:
             logger.warning(f"Failed to clear jobs: {e}")
@@ -1558,12 +1567,11 @@ def api_info():
 def add_missing_columns():
     with app.app_context():
         try:
-            inspector = db.inspect(db.engine)
+            inspector = inspect(db.engine)
             columns = [col['name'] for col in inspector.get_columns('jobs')]
             
             missing_columns = []
             
-            # Add all missing columns with proper data types
             column_definitions = {
                 'experience_min': 'ALTER TABLE jobs ADD COLUMN experience_min INTEGER',
                 'experience_max': 'ALTER TABLE jobs ADD COLUMN experience_max INTEGER',
@@ -1577,7 +1585,7 @@ def add_missing_columns():
                 'company_logo': 'ALTER TABLE jobs ADD COLUMN company_logo VARCHAR(500)',
                 'company_website': 'ALTER TABLE jobs ADD COLUMN company_website VARCHAR(300)',
                 'external_id': 'ALTER TABLE jobs ADD COLUMN external_id VARCHAR(200)',
-                'source': 'ALTER TABLE jobs ADD COLUMN source VARCHAR(50) DEFAULT \'manual\'',
+                'source': "ALTER TABLE jobs ADD COLUMN source VARCHAR(50) DEFAULT 'manual'",
                 'is_approved': 'ALTER TABLE jobs ADD COLUMN is_approved BOOLEAN DEFAULT FALSE',
                 'is_active': 'ALTER TABLE jobs ADD COLUMN is_active BOOLEAN DEFAULT TRUE',
                 'is_remote': 'ALTER TABLE jobs ADD COLUMN is_remote BOOLEAN DEFAULT FALSE',
@@ -1604,19 +1612,21 @@ def add_missing_columns():
             else:
                 logger.info("All required columns exist")
                 
-            # Add indexes for better performance
             index_statements = [
                 'CREATE INDEX IF NOT EXISTS idx_jobs_slug ON jobs(slug)',
                 'CREATE INDEX IF NOT EXISTS idx_jobs_is_approved ON jobs(is_approved)',
                 'CREATE INDEX IF NOT EXISTS idx_jobs_is_active ON jobs(is_active)',
-                'CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at)'
+                'CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at)',
+                'CREATE INDEX IF NOT EXISTS idx_jobs_external_id ON jobs(external_id)',
+                'CREATE INDEX IF NOT EXISTS idx_job_analytics_job_id ON job_analytics(job_id)',
+                'CREATE INDEX IF NOT EXISTS idx_job_analytics_event_type ON job_analytics(event_type)'
             ]
             
             for index_stmt in index_statements:
                 try:
                     db.session.execute(text(index_stmt))
                 except Exception as idx_error:
-                    logger.warning(f"Could not create index: {idx_error}")
+                    logger.debug(f"Index may already exist: {idx_error}")
                     
             db.session.commit()
                 
@@ -1624,13 +1634,12 @@ def add_missing_columns():
             logger.error(f"Error adding columns: {e}")
             db.session.rollback()
 
-
 def init_db():
     with app.app_context():
         try:
             db.session.execute(text('SELECT 1'))
             
-            inspector = db.inspect(db.engine)
+            inspector = inspect(db.engine)
             existing_tables = inspector.get_table_names()
             
             logger.info(f"Existing tables: {existing_tables}")
